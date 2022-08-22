@@ -45,6 +45,7 @@
    * FIXED: Some interpolated points had invalid edge_index in trace_attributes response [#3646](https://github.com/valhalla/valhalla/pull/3670)
    * FIXED: Use a small node snap distance in map-matching. FIxes issue with incorrect turn followed by Uturn. [#3677](https://github.com/valhalla/valhalla/pull/3677)
    * FIXED: Conan error when building Docker image. [#3689](https://github.com/valhalla/valhalla/pull/3689)
+   * FIXED: CostMatrix incorrect tile usage with oppedge. [#3719](https://github.com/valhalla/valhalla/pull/3719)
 
 * **Enhancement**
    * CHANGED: Pronunciation for names and destinations [#3132](https://github.com/valhalla/valhalla/pull/3132)
@@ -104,6 +105,7 @@
    * CHANGED: Use `starts_with()` instead of `substr(0, N)` getting and comparing to prefix [#3702](https://github.com/valhalla/valhalla/pull/3702)
    * ADDED: Ferry support for HGV [#3710](https://github.com/valhalla/valhalla/issues/3710)
    * ADDED: Linting & formatting checks for Python code [#3713](https://github.com/valhalla/valhalla/pull/3713)
+   * CHANGED: rename Turkey admin to Türkiye [#3720](https://github.com/valhalla/valhalla/pull/3713)
 
 ## Release Date: 2021-10-07 Valhalla 3.1.4
 * **Removed**
