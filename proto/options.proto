@@ -307,6 +307,15 @@ message Costing {
     oneof has_elevator_penalty {
       float elevator_penalty = 79;
     }
+    oneof has_exclude_bridge {
+      bool exclude_bridge = 80;
+    }
+    oneof has_exclude_tunnel {
+      bool exclude_tunnel = 81;
+    }
+    oneof has_exclude_toll {
+      bool exclude_toll = 82;
+    }
   }
 
   oneof has_options {
