@@ -443,9 +443,9 @@ bool AutoCost::Allowed(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
 
@@ -471,9 +471,9 @@ bool AutoCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && opp_edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(opp_edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
 
@@ -808,9 +808,9 @@ bool BusCost::Allowed(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
 
@@ -836,9 +836,9 @@ bool BusCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && opp_edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(opp_edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
 
@@ -991,9 +991,9 @@ bool TaxiCost::Allowed(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
 
@@ -1019,9 +1019,9 @@ bool TaxiCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (!allow_destination_only_ && !pred.destonly() && opp_edge->destonly()) ||
       (pred.closure_pruning() && IsClosed(opp_edge, tile)) ||
       (exclude_unpaved_ && !pred.unpaved() && edge->unpaved()) || !IsHOVAllowed(edge) ||
-      (exclude_bridge_ && !pred.bridge() && edge->bridge()) ||
-      (exclude_tunnel_ && !pred.tunnel() && edge->tunnel()) ||
-      (exclude_toll_ && !pred.toll() && edge->toll())) {
+      (exclude_bridges_ && !pred.bridge() && edge->bridge()) ||
+      (exclude_tunnels_ && !pred.tunnel() && edge->tunnel()) ||
+      (exclude_tolls_ && !pred.toll() && edge->toll())) {
     return false;
   }
   return DynamicCost::EvaluateRestrictions(access_mask_, edge, false, tile, opp_edgeid, current_time,

@@ -967,9 +967,9 @@ protected:
   bool penalize_uturns_;
 
   bool exclude_unpaved_{false};
-  bool exclude_bridge_{false};
-  bool exclude_tunnel_{false};
-  bool exclude_toll_{false};
+  bool exclude_bridges_{false};
+  bool exclude_tunnels_{false};
+  bool exclude_tolls_{false};
 
   bool exclude_cash_only_tolls_{false};
 
@@ -1064,9 +1064,9 @@ protected:
     top_speed_ = costing_options.top_speed();
 
     exclude_unpaved_ = costing_options.exclude_unpaved();
-    exclude_bridge_ = costing_options.exclude_bridge();
-    exclude_tunnel_ = costing_options.exclude_tunnel();
-    exclude_toll_ = costing_options.exclude_toll();
+    exclude_bridges_ = costing_options.exclude_bridges();
+    exclude_tunnels_ = costing_options.exclude_tunnels();
+    exclude_tolls_ = costing_options.exclude_tolls();
 
     exclude_cash_only_tolls_ = costing_options.exclude_cash_only_tolls();
   }
@@ -1174,9 +1174,9 @@ struct BaseCostingOptionsConfig {
   ranged_default_t<float> closure_factor_;
 
   bool exclude_unpaved_;
-  bool exclude_bridge_;
-  bool exclude_tunnel_;
-  bool exclude_toll_;
+  bool exclude_bridges_;
+  bool exclude_tunnels_;
+  bool exclude_tolls_;
 
   bool exclude_cash_only_tolls_ = false;
 
