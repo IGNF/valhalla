@@ -251,6 +251,7 @@ config = {
         'max_timedep_distance': 500000,
         'max_alternates': 2,
         'max_exclude_polygons_length': 10000,
+        'allow_hard_exclusions': False,
     },
     'statsd': {
         'host': Optional(str),
@@ -514,6 +515,7 @@ help_text = {
         'max_timedep_distance': 'Maximum b-line distance between locations to allow a time-dependent route',
         'max_alternates': 'Maximum number of alternate routes to allow in a request',
         'max_exclude_polygons_length': 'Maximum total perimeter of all exclude_polygons in meters',
+        'allow_hard_exclusions': 'Whether hard exclusions, such as exclude_bridges, exclude_tunnels or exclude_tolls ar allowed on this server'
     },
     'statsd': {
         'host': 'The statsd host address',
