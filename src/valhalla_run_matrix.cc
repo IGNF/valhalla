@@ -191,7 +191,7 @@ int main(int argc, char* argv[]) {
         kv.first == "max_radius" || kv.first == "max_timedep_distance" || kv.first == "skadi" ||
         kv.first == "trace" || kv.first == "isochrone" || kv.first == "centroid" ||
         kv.first == "max_alternates" || kv.first == "max_exclude_polygons_length" ||
-        kv.first == "status") {
+        kv.first == "status" || kv.first == "allow_hard_exclusions") {
       continue;
     }
     max_matrix_distance.emplace(kv.first,
