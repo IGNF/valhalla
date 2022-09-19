@@ -475,7 +475,7 @@ bool AutoCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (exclude_bridges_ && !pred.bridge() && opp_edge->bridge()) ||
       (exclude_tunnels_ && !pred.tunnel() && opp_edge->tunnel()) ||
       (exclude_tolls_ && !pred.toll() && opp_edge->toll()) ||
-      (edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
+      (opp_edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
     return false;
   }
 
@@ -842,7 +842,7 @@ bool BusCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (exclude_bridges_ && !pred.bridge() && opp_edge->bridge()) ||
       (exclude_tunnels_ && !pred.tunnel() && opp_edge->tunnel()) ||
       (exclude_tolls_ && !pred.toll() && opp_edge->toll()) ||
-      (edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
+      (opp_edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
     return false;
   }
 
@@ -1027,7 +1027,7 @@ bool TaxiCost::AllowedReverse(const baldr::DirectedEdge* edge,
       (exclude_bridges_ && !pred.bridge() && opp_edge->bridge()) ||
       (exclude_tunnels_ && !pred.tunnel() && opp_edge->tunnel()) ||
       (exclude_tolls_ && !pred.toll() && opp_edge->toll()) ||
-      (edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
+      (opp_edge->is_shortcut() && (exclude_bridges_ || exclude_tunnels_))) {
     return false;
   }
   return DynamicCost::EvaluateRestrictions(access_mask_, edge, false, tile, opp_edgeid, current_time,
