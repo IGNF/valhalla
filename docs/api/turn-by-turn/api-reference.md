@@ -225,6 +225,16 @@ These options are available for transit costing when the multimodal costing mode
 | `transit_transfer_max_distance` | A pedestrian option that can be added to the request to extend the defaults (800 meters or 0.5 miles). This is the maximum walking distance between transfers.|
 | `filters` | A way to filter for one or more `stops`, `routes`, or `operators`. Filters must contain a list of [Onestop IDs](https://transit.land/documentation/onestop-id-scheme/), which is a unique identifier for Transitland data, and an `action`. <ul><li>`ids`: any number of Onestop IDs (such as o-9q9-bart)</li><li>`action`: either `exclude` to exclude all of the `ids` listed in the filter or `include` to include only the `ids` listed in the filter</li></ul>
 
+##### Hard exclusions -> **EXPERIMENTAL**
+
+The following options are available for all costing methods. Those options are not available by default, the server config must have `service_limits.allow_hard_exclusions` set to true in order to allow them. If not allowed and set to true, the server will return a 400 error code. If allowed and set to true, it is higly plausible that no route will be found.
+
+| Vehicle Options | Description |
+| :-------------------------- | :----------- |
+| `exclude_bridges` | This value indicates whether or not the path may include bridges. If `exclude_bridges` is set to 1 it is allowed to start and end with bridges, but is not allowed to have them in the middle of the route path, otherwise they are allowed. If set to true, it is highly plausible that no path will be found. Default false. |
+| `exclude_tunnels` | This value indicates whether or not the path may include tunnels. If `exclude_tunnels` is set to 1 it is allowed to start and end with tunnels, but is not allowed to have them in the middle of the route path, otherwise they are allowed. If set to true, it is highly plausible that no path will be found. Default false. |
+| `exclude_tolls` | This value indicates whether or not the path may include tolls. If `exclude_tolls` is set to 1 it is allowed to start and end with tolls, but is not allowed to have them in the middle of the route path, otherwise they are allowed. If set to true, it is highly plausible that no path will be found. Default false. |
+
 ###### Filter transit data
 
 When using `filters`, you need to include a [Onestop ID](https://transit.land/documentation/onestop-id-scheme/) to identify the stop, routes, or operators to include or exclude in your query. Depending on how you are interacting with transit data from Transitland, there are different ways of obtaining the Onestop ID.
@@ -540,6 +550,7 @@ The codes correspond to code returned from a particular [Valhalla project](https
 |141 | Arrive by for multimodal not implemented yet |
 |142 | Arrive by not implemented for isochrones |
 |143 | ignore_closure in costing and exclude_closure in search_filter cannot both be specified |
+|145 | Hard exclusions not allowed on this server |
 |150 | Exceeded max locations |
 |151 | Exceeded max time |
 |152 | Exceeded max contours |

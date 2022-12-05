@@ -309,6 +309,15 @@ message Costing {
     }
     uint32 fixed_speed = 80;
     uint32 axle_count = 81;
+    oneof has_exclude_bridges {
+      bool exclude_bridges = 82;
+    }
+    oneof has_exclude_tunnels {
+      bool exclude_tunnels = 83;
+    }
+    oneof has_exclude_tolls {
+      bool exclude_tolls = 84;
+    }
   }
 
   oneof has_options {

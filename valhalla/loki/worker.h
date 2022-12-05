@@ -102,6 +102,7 @@ protected:
   float min_resample;
   unsigned int max_alternates;
   bool allow_verbose;
+  bool allow_hard_exclusions;
 
 private:
   std::string service_name() const override {
