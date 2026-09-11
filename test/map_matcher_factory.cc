@@ -1,15 +1,13 @@
 // -*- mode: c++ -*-
-#include <string>
-
+#include "meili/map_matcher_factory.h"
 #include "baldr/rapidjson_utils.h"
+#include "proto/api.pb.h"
+#include "sif/costconstants.h"
+#include "test.h"
+
 #include <boost/property_tree/ptree.hpp>
 
-#include "sif/costconstants.h"
-#include "sif/costfactory.h"
-
-#include "meili/map_matcher_factory.h"
-
-#include "test.h"
+#include <string>
 
 #if !defined(VALHALLA_SOURCE_DIR)
 #define VALHALLA_SOURCE_DIR
@@ -21,10 +19,12 @@ using namespace valhalla;
 
 using ptree = boost::property_tree::ptree;
 
-void create_costing_options(Costing::Type costing, Options& options) {
+void create_costing_options(Costing::Type costing,
+                            Options& options,
+                            google::protobuf::RepeatedPtrField<CodedDescription>& warnings) {
   const rapidjson::Document doc;
-  sif::ParseCosting(doc, "/costing_options", options);
   options.set_costing_type(costing);
+  sif::ParseCosting(doc, "/costing_options", options, warnings);
 }
 
 TEST(MapMatcherFactory, TestMapMatcherFactory) {
@@ -36,8 +36,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
     // Test configuration priority
     {
       // Copy it so we can change it
-      Options options;
-      create_costing_options(Costing::auto_, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::auto_, options, *api.mutable_info()->mutable_warnings());
       auto config = root;
       config.put<std::string>("meili.auto.hello", "world");
       config.put<std::string>("meili.default.hello", "default world");
@@ -53,8 +54,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test configuration priority
     {
-      Options options;
-      create_costing_options(Costing::bicycle, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::bicycle, options, *api.mutable_info()->mutable_warnings());
       auto config = root;
       config.put<std::string>("meili.default.hello", "default world");
       meili::MapMatcherFactory factory(config);
@@ -69,8 +71,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test configuration priority
     {
-      Options options;
-      create_costing_options(Costing::pedestrian, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::pedestrian, options, *api.mutable_info()->mutable_warnings());
       auto config = root;
       meili::MapMatcherFactory factory(config);
       float preferred_search_radius = 3;
@@ -89,8 +92,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test configuration priority
     {
-      Options options;
-      create_costing_options(Costing::pedestrian, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::pedestrian, options, *api.mutable_info()->mutable_warnings());
       meili::MapMatcherFactory factory(root);
       float preferred_search_radius = 3;
       options.set_search_radius(preferred_search_radius);
@@ -103,8 +107,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test default mode
     {
-      Options options;
-      create_costing_options(Costing::auto_, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::auto_, options, *api.mutable_info()->mutable_warnings());
       meili::MapMatcherFactory factory(root);
       auto matcher = factory.Create(options);
       EXPECT_EQ(matcher->travelmode(), sif::TravelMode::kDrive)
@@ -115,8 +120,9 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test preferred mode
     {
-      Options options;
-      create_costing_options(Costing::pedestrian, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::pedestrian, options, *api.mutable_info()->mutable_warnings());
       meili::MapMatcherFactory factory(root);
       auto matcher = factory.Create(options);
       EXPECT_EQ(matcher->travelmode(), sif::TravelMode::kPedestrian)
@@ -124,7 +130,7 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
       delete matcher;
 
-      options.set_costing_type(Costing::bicycle);
+      create_costing_options(Costing::bicycle, options, *api.mutable_info()->mutable_warnings());
       matcher = factory.Create(options);
       EXPECT_EQ(matcher->travelmode(), sif::TravelMode::kBicycle)
           << "should read costing in options correctly again";
@@ -134,12 +140,13 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
 
     // Test custom costing
     {
-      Options options;
-      create_costing_options(Costing::pedestrian, options);
+      Api api;
+      Options& options = *api.mutable_options();
+      create_costing_options(Costing::pedestrian, options, *api.mutable_info()->mutable_warnings());
       meili::MapMatcherFactory factory(root);
       options.set_costing_type(Costing::pedestrian);
       auto matcher = factory.Create(options);
-      EXPECT_NE(matcher->costing()->travel_type(), (int)sif::PedestrianType::kSegway)
+      EXPECT_NE(matcher->costing()->travel_type(), (int)sif::PedestrianType::kWheelchair)
           << "should not have custom costing options when not set in preferences";
 
       delete matcher;
@@ -147,10 +154,10 @@ TEST(MapMatcherFactory, TestMapMatcherFactory) {
       options.mutable_costings()
           ->find(Costing::pedestrian)
           ->second.mutable_options()
-          ->set_transport_type("segway");
+          ->set_transport_type("wheelchair");
       matcher = factory.Create(options);
 
-      EXPECT_EQ(matcher->costing()->travel_type(), (int)sif::PedestrianType::kSegway)
+      EXPECT_EQ(matcher->costing()->travel_type(), (int)sif::PedestrianType::kWheelchair)
           << "should read custom costing options in preferences correctly";
 
       delete matcher;
@@ -164,10 +171,11 @@ TEST(MapMatcherFactory, TestMapMatcher) {
   // Nothing special to test for the moment
 
   meili::MapMatcherFactory factory(root);
-  Options options;
-  create_costing_options(Costing::auto_, options);
+  Api api;
+  Options& options = *api.mutable_options();
+  create_costing_options(Costing::auto_, options, *api.mutable_info()->mutable_warnings());
   auto auto_matcher = factory.Create(options);
-  options.set_costing_type(Costing::pedestrian);
+  create_costing_options(Costing::pedestrian, options, *api.mutable_info()->mutable_warnings());
   auto pedestrian_matcher = factory.Create(options);
 
   // Share the same pool

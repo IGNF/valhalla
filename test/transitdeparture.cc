@@ -1,6 +1,7 @@
 #include "baldr/transitdeparture.h"
+#include "baldr/graphconstants.h"
 
-#include "test.h"
+#include <gtest/gtest.h>
 
 using namespace std;
 using namespace valhalla::baldr;
@@ -20,7 +21,7 @@ TEST(TransitDeparture, TestWriteReadFixed) {
   EXPECT_EQ(dep.type(), kFixedSchedule);
   EXPECT_EQ(dep.lineid(), 111);
   EXPECT_EQ(dep.tripid(), 222);
-  EXPECT_EQ(dep.routeid(), 333);
+  EXPECT_EQ(dep.routeindex(), 333);
   EXPECT_EQ(dep.blockid(), 444);
   EXPECT_EQ(dep.headsign_offset(), 555);
   EXPECT_EQ(dep.departure_time(), 9000);
@@ -65,7 +66,7 @@ TEST(TransitDeparture, TestWriteReadFreq) {
   EXPECT_EQ(dep.type(), kFrequencySchedule);
   EXPECT_EQ(dep.lineid(), 111);
   EXPECT_EQ(dep.tripid(), 222);
-  EXPECT_EQ(dep.routeid(), 333);
+  EXPECT_EQ(dep.routeindex(), 333);
   EXPECT_EQ(dep.blockid(), 444);
   EXPECT_EQ(dep.headsign_offset(), 555);
   EXPECT_EQ(dep.departure_time(), 9000);

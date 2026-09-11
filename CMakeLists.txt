@@ -1,14 +1,12 @@
-# Minimal CMake configuration for Valhalla
-#
-# Builds libvalhalla and minimal collection of programs.
-#
-# This is NOT equivalent to the official Valhalla build configuration based on GNU Autotools.
-# This is NOT suitable for building complete Valhalla suite.
-# This is secondary build configuration provided for convenient development
-# on Windows and using CMake-enabled IDEs.
-#
-cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.15 FATAL_ERROR)
 project(valhalla LANGUAGES CXX C)
+
+# ensure build-tree executables find the local libvalhalla.so
+# use RPATH (not RUNPATH) so it takes precedence over system ldconfig cache
+set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/src")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_link_options("-Wl,--disable-new-dtags")
+endif()
 
 include(FindPkgConfig)
 include(GNUInstallDirs)
@@ -17,12 +15,13 @@ set(VALHALLA_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(VALHALLA_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR})
 list(INSERT CMAKE_MODULE_PATH 0 ${VALHALLA_SOURCE_DIR}/cmake)
 
-set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ language version to use (default is 14)")
+set(CMAKE_CXX_STANDARD 20 CACHE STRING "C++ language version to use (default is 20)")
 option(ENABLE_TOOLS "Enable Valhalla tools" ON)
 option(ENABLE_DATA_TOOLS "Enable Valhalla data tools" ON)
 option(ENABLE_SERVICES "Enable Valhalla services" ON)
 option(ENABLE_HTTP "Enable the use of CURL" ON)
 option(ENABLE_PYTHON_BINDINGS "Enable Python bindings" ON)
+option(ENABLE_NODE_BINDINGS "Enable Node.js bindings" OFF)
 option(ENABLE_CCACHE "Speed up incremental rebuilds via ccache" ON)
 option(ENABLE_COVERAGE "Build with coverage instrumentalisation" OFF)
 option(ENABLE_COMPILER_WARNINGS "Build with compiler warnings" OFF)
@@ -31,17 +30,18 @@ option(ENABLE_ADDRESS_SANITIZER "Use memory sanitizer for Debug build" OFF)
 option(ENABLE_UNDEFINED_SANITIZER "Use UB sanitizer for Debug build" OFF)
 option(ENABLE_TESTS "Enable Valhalla tests" ON)
 option(ENABLE_WERROR "Convert compiler warnings to errors. Requires ENABLE_COMPILER_WARNINGS=ON to take effect" OFF)
-option(ENABLE_BENCHMARKS "Enable microbenchmarking" ON)
 option(ENABLE_THREAD_SAFE_TILE_REF_COUNT "If ON uses shared_ptr as tile reference(i.e. it is thread safe)" OFF)
 option(ENABLE_SINGLE_FILES_WERROR "Convert compiler warnings to errors for single files" ON)
+option(PREFER_EXTERNAL_DEPS "Whether to use internally vendored headers or find the equivalent external package" OFF)
 # useful to workaround issues likes this https://stackoverflow.com/questions/24078873/cmake-generated-xcode-project-wont-compile
 option(ENABLE_STATIC_LIBRARY_MODULES "If ON builds Valhalla modules as STATIC library targets" OFF)
+option(ENABLE_GEOTIFF "Whether to include libgeotiff; currently only used for raster serialization of isotile grid" ON)
+option(ENABLE_LZ4 "Enable LZ4 decompression support for elevation tiles and OSM PBF files" ON)
+option(INSTALL_TEST_LIB "Install Valhalla's own test lib" OFF)
 
 set(LOGGING_LEVEL "" CACHE STRING "Logging level, default is INFO")
 set_property(CACHE LOGGING_LEVEL PROPERTY STRINGS "NONE;ALL;ERROR;WARN;INFO;DEBUG;TRACE")
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -52,50 +52,40 @@ include(CheckCXXCompilerFlag)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcolor-diagnostics")
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  set(COLOR_FLAG "-fdiagnostics-color=auto")
   check_cxx_compiler_flag("-fdiagnostics-color=auto" HAS_COLOR_FLAG)
-  if(NOT HAS_COLOR_FLAG)
-    set(COLOR_FLAG "")
+  if(HAS_COLOR_FLAG)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COLOR_FLAG}")
   endif()
-  # using GCC
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COLOR_FLAG}")
 endif()
 
 # Explicitly set the build type to Release if no other type is specified
 # on the command line.  Without this, cmake defaults to an unoptimized,
 # non-debug build, which almost nobody wants.
-if(NOT MSVC_IDE) # TODO: May need to be extended for Xcode, CLion, etc.
+get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if(isMultiConfig)
+    message(STATUS "Multi-config generator detected (${CMAKE_GENERATOR}) — skipping CMAKE_BUILD_TYPE checks.")
+else()
+  # CMAKE_BUILD_TYPE is only relevant for single-configuration generators.
   if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "No build type specified, defaulting to Release")
     set(CMAKE_BUILD_TYPE Release)
   endif()
-endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL Debug)
-  message(STATUS "Configuring in debug mode")
-elseif(CMAKE_BUILD_TYPE STREQUAL Release)
-  message(STATUS "Configuring in release mode")
-elseif(CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
-  message(STATUS "Configuring in release mode with debug symbols")
-elseif(CMAKE_BUILD_TYPE STREQUAL MinRelSize)
-  message(STATUS "Configuring in release mode with minimized size")
-elseif(CMAKE_BUILD_TYPE STREQUAL None)
-  message(STATUS "Configuring without a mode, no optimization flags will be set")
-else()
-  message(FATAL_ERROR "Unrecognized build type. Use one of Debug, Release, RelWithDebInfo, MinRelSize, None")
+  if(CMAKE_BUILD_TYPE STREQUAL Debug)
+    message(STATUS "Configuring in debug mode")
+  elseif(CMAKE_BUILD_TYPE STREQUAL Release)
+    message(STATUS "Configuring in release mode")
+  elseif(CMAKE_BUILD_TYPE STREQUAL RelWithDebInfo)
+    message(STATUS "Configuring in release mode with debug symbols")
+  elseif(CMAKE_BUILD_TYPE STREQUAL MinRelSize)
+    message(STATUS "Configuring in release mode with minimized size")
+  elseif(CMAKE_BUILD_TYPE STREQUAL None)
+    message(STATUS "Configuring without a mode, no optimization flags will be set")
+  else()
+    message(FATAL_ERROR "Unrecognized build type. Use one of Debug, Release, RelWithDebInfo, MinRelSize, None")
+  endif()
 endif()
-
-function(create_source_groups prefix)
-  foreach(file ${ARGN})
-    get_filename_component(file "${file}" ABSOLUTE)
-    string(FIND "${file}" "${PROJECT_BINARY_DIR}/" pos)
-    if(pos EQUAL 0)
-      source_group(TREE "${PROJECT_BINARY_DIR}/" PREFIX "Generated Files" FILES "${file}")
-    else()
-      source_group(TREE "${PROJECT_SOURCE_DIR}/" PREFIX "${prefix}" FILES "${file}")
-    endif()
-  endforeach()
-endfunction()
 
 if(ENABLE_CCACHE AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU"))
   find_program(CCACHE_FOUND ccache)
@@ -107,92 +97,123 @@ if(ENABLE_CCACHE AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILE
   endif()
 endif()
 
-include(cmake/SanitizerOptions.cmake)
+include(ValhallaSanitizerOptions)
+include(ValhallaSourceGroups)
 
-## Coverage report targets
-if(ENABLE_COVERAGE)
-  find_program(GENHTML_PATH NAMES genhtml genhtml.perl genhtml.bat)
-  if(NOT GENHTML_PATH)
-    message(FATAL_ERROR "no genhtml installed")
+# We use pkg-config for (almost) all dependencies:
+# - CMake Find* modules are versioned with CMake, not the packages, see protobuf > 21.12
+# - it's more trivial to use custom installations via PKG_CONFIG_PATH env var
+pkg_check_modules(ZLIB REQUIRED IMPORTED_TARGET zlib)
+
+# cURL
+set(curl_target "")
+if (ENABLE_HTTP)
+  pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+  if (CURL_FOUND)
+    target_compile_definitions(PkgConfig::CURL INTERFACE ENABLE_HTTP)
+    set(curl_target PkgConfig::CURL)
+  else()
+    message(FATAL_ERROR "ENABLE_HTTP=ON, but cURL not found...")
   endif()
-
-  set(FASTCOV_PATH ${VALHALLA_SOURCE_DIR}/third_party/fastcov/fastcov.py)
-  add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/coverage.info
-    COMMAND ${FASTCOV_PATH} -d . --exclude /usr/ third_party/ ${CMAKE_CURRENT_BINARY_DIR}/ --lcov -o coverage.info
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS check)
-
-  add_custom_target(coverage
-    COMMAND ${GENHTML_PATH} --prefix ${CMAKE_CURRENT_BINARY_DIR} --output-directory coverage --title "Test Coverage" --legend --show-details coverage.info
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/coverage.info)
-  set_target_properties(coverage PROPERTIES FOLDER "Tests")
 endif()
 
-## Dependencies
-find_package(Threads REQUIRED)
-find_package(ZLIB REQUIRED)
+# prefer CONFIG mode over MODULE mode, which versions configuration on the package, not CMake
+# NOTE: this is only supported for cmake >= 3.15, but shouldn't be a problem in real life
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 
-# try to find an installed boost or install locally with conan
-set(boost_VERSION "1.71")
-find_package(Boost ${boost_VERSION} QUIET)
-if (NOT Boost_FOUND)
-  # bail if there's no conan installed
-  message(STATUS "No compatible boost version detected, using conan...")
-  find_program(conan_FOUND conan)
-  if (NOT conan_FOUND)
-    message(FATAL_ERROR "conan needs to be installed for boost, see https://docs.conan.io/en/latest/installation.html.")
-  endif()
-
-  # build dir needs to be added, that's where conan writes some info
-  list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_BINARY_DIR})
-  list(APPEND CMAKE_PREFIX_PATH ${CMAKE_CURRENT_BINARY_DIR})
-  include(${VALHALLA_SOURCE_DIR}/cmake/conan.cmake)
-
-  conan_cmake_autodetect(settings)
-  conan_cmake_install(PATH_OR_REFERENCE ${VALHALLA_SOURCE_DIR}/conanfile.txt
-                      REMOTE conancenter
-                      SETTINGS ${settings}
-                      OUTPUT_QUIET)
-endif()
-find_package(Boost ${boost_VERSION} REQUIRED)
+# Boost has no .pc file..
+find_package(Boost 1.71 REQUIRED)
 add_definitions(-DBOOST_NO_CXX11_SCOPED_ENUMS)
+add_definitions(-DBOOST_ALLOW_DEPRECATED_HEADERS)
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
-if(NOT TARGET CURL::CURL)
-  add_library(CURL::CURL INTERFACE IMPORTED)
-  if(ENABLE_HTTP OR ENABLE_DATA_TOOLS)
-    if(NOT CURL_FOUND)
-      find_package(CURL REQUIRED)
-    endif()
-    set_target_properties(CURL::CURL PROPERTIES
-      INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIR}"
-      INTERFACE_COMPILE_DEFINITIONS CURL_STATICLIB)
-    if(NOT MSVC)
-      set_property(TARGET CURL::CURL APPEND PROPERTY INTERFACE_LINK_LIBRARIES "${CURL_LIBRARIES}")
+find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
+
+# resolve vendored libraries
+set(date_include_dir ${VALHALLA_SOURCE_DIR}/third_party/date/include)
+set(rapidjson_include_dir ${VALHALLA_SOURCE_DIR}/third_party/rapidjson/include)
+set(unordered_dense_include_dir ${VALHALLA_SOURCE_DIR}/third_party/unordered_dense/include)
+set(cxxopts_include_dir ${VALHALLA_SOURCE_DIR}/third_party/cxxopts/include)
+set(libosmium_include_dirs ${VALHALLA_SOURCE_DIR}/third_party/libosmium/include ${VALHALLA_SOURCE_DIR}/third_party/protozero/include)
+set(vtzero_include_dirs ${VALHALLA_SOURCE_DIR}/third_party/vtzero/include ${VALHALLA_SOURCE_DIR}/third_party/protozero/include)
+set(dirent_include_dir ${VALHALLA_SOURCE_DIR}/third_party/dirent/include)
+if (PREFER_EXTERNAL_DEPS)
+  # date
+  # check if tz_private.h exists, e.g. arch linux doesn't distribute that..
+  find_package(date QUIET)
+  if (date_FOUND)
+    get_target_property(temp_date_include_dir date::date INTERFACE_INCLUDE_DIRECTORIES)
+    if (EXISTS ${temp_date_include_dir}/date/tz_private.h)
+      set(date_include_dir ${temp_date_include_dir})
     else()
-      link_libraries(${CURL_LIBRARIES})
+      message(WARNING "Couldn't find date/tz_private.h in ${temp_date_include_dir}, using vendored date...")
+    endif()
+  else()
+    message(WARNING "No date found in ${temp_date_include_dir}, using vendored date...")
+  endif()
+  # rapidjson
+  find_package(RapidJSON)
+  if (RapidJSON_FOUND)
+    # couldn't figure out how to get the includedir without this
+    find_path(RapidJSON_INCLUDE_DIR NAMES rapidjson/rapidjson.h)
+    set(rapidjson_include_dir ${RapidJSON_INCLUDE_DIR})
+  else()
+    message(WARNING "No RapidJSON found in system libraries, using vendored RapidJSON...")
+  endif()
+  # ankerl/unordered_dense
+  find_package(unordered_dense QUIET)
+  if (unordered_dense_FOUND)
+    get_target_property(unordered_dense_include_dir unordered_dense::unordered_dense INTERFACE_INCLUDE_DIRECTORIES)
+  else()
+    message(WARNING "No ankerl/unordered_dense found in system libraries, using vendored ankerl/unordered_dense...")
+  endif()
+  # cxxopts
+  find_package(cxxopts QUIET)
+  if (cxxopts_FOUND)
+    get_target_property(cxxopts_include_dir cxxopts::cxxopts INTERFACE_INCLUDE_DIRECTORIES)
+  else()
+    message(WARNING "No cxxopts found in system libraries, using vendored cxxopts...")
+  endif()
+  # protozero is needed for libosmium & vtzero
+  find_path(PROTOZERO_INCLUDE_DIRS "protozero/version.hpp")
+  # libosmium
+  find_path(OSMIUM_INCLUDE_DIRS "osmium/version.hpp")
+  if (NOT OSMIUM_INCLUDE_DIRS OR NOT PROTOZERO_INCLUDE_DIRS)
+    message(WARNING "libosmium or protozero not found in system libraries, using vendored libosmium and protozero...")
+  else()
+    set(libosmium_include_dirs ${OSMIUM_INCLUDE_DIRS} ${PROTOZERO_INCLUDE_DIRS})
+  endif()
+  # vtzero
+  find_path(VTZERO_INCLUDE_DIRS "vtzero/version.hpp")
+  if (NOT VTZERO_INCLUDE_DIRS OR NOT PROTOZERO_INCLUDE_DIRS)
+    message(WARNING "No vtzero or protozero found in system libraries, using vendored vtzero and protozero...")
+  else()
+    set(vtzero_include_dirs ${VTZERO_INCLUDE_DIRS} ${PROTOZERO_INCLUDE_DIRS})
+  endif()
+  # dirent
+  if (WIN32)
+    find_path(DIRENT_INCLUDE_DIRS dirent.h)
+    if (NOT DIRENT_INCLUDE_DIRS)
+      message(WARNING "No dirent.h found in system headers, using vendored dirent.h...")
+    else()
+      set(dirent_include_dir ${DIRENT_INCLUDE_DIRS})
     endif()
   endif()
-else()
-  message(STATUS "Using curl from the outside")
 endif()
 
-if(NOT Protobuf_FOUND)
-  find_package(Protobuf REQUIRED)
-endif()
-
-message(STATUS "Using pbf headers from ${PROTOBUF_INCLUDE_DIR}")
-message(STATUS "Using pbf libs from ${PROTOBUF_LIBRARY}")
-message(STATUS "Using pbf release libs from ${PROTOBUF_LIBRARY_RELEASE}")
-message(STATUS "Using pbf debug libs from ${PROTOBUF_LIBRARY_DEBUG}")
+# Protobuf is non-trivial to include via pkg-config, pkg_check_modules has no way to check
+# for protoc location in a platform agnostic manner
+# newer protobuf versions require a compat bool
+set(protobuf_MODULE_COMPATIBLE ON CACHE BOOL "")
+find_package(Protobuf REQUIRED)
+# and turn it off again
+message(STATUS "Using protoc from ${Protobuf_PROTOC_EXECUTABLE}")
+message(STATUS "Using pbf headers from ${Protobuf_INCLUDE_DIRS}")
+message(STATUS "Using pbf libs from ${PROTOBUF_LIBRARIES}")
 if(TARGET protobuf::libprotobuf-lite)
   message(STATUS "Using pbf-lite")
 endif()
-
-# Allow linking against full or lite version of Protobuf library
-# TODO: After switching to CMake 3.12+, replace with
-#       $<TARGET_EXISTS:protobuf::libprotobuf
-#       $<TARGET_EXISTS:protobuf::libprotobuf-lite
 if(TARGET protobuf::libprotobuf-lite)
   set(valhalla_protobuf_targets protobuf::libprotobuf-lite)
 elseif(TARGET protobuf::libprotobuf)
@@ -201,29 +222,71 @@ else()
   message(FATAL_ERROR "Required target protobuf::libprotobuf-lite or protobuf::libprotobuf is not defined")
 endif()
 
-add_library(libprime_server INTERFACE IMPORTED)
-if(ENABLE_SERVICES)
-  pkg_check_modules(libprime_server REQUIRED libprime_server>=0.6.3)
-  # workaround for https://gitlab.kitware.com/cmake/cmake/issues/15804
-  find_library(libprime_server_LIBRARY
-    NAME ${libprime_server_LIBRARIES}
-    HINTS ${libprime_server_LIBRARY_DIRS})
-  set_target_properties(libprime_server PROPERTIES
-    INTERFACE_LINK_LIBRARIES "${libprime_server_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${libprime_server_INCLUDE_DIRS}"
-    INTERFACE_COMPILE_DEFINITIONS HAVE_HTTP)
+# unless you said you didnt want gdal we try to turn it on, if we cant we tell you
+# we don't need it to build tiles (yet)
+set(GTIFF_TARGETS "")
+if (ENABLE_GEOTIFF AND (ENABLE_SERVICES OR ENABLE_TOOLS OR ENABLE_PYTHON_BINDINGS OR ENABLE_NODE_BINDINGS))
+  find_package(TIFF)
+  find_package(GeoTIFF)
+  # libtiff >= 4.7 ships a cmake config whose target is TIFF::tiff, not the module's TIFF::TIFF
+  if (TIFF_FOUND AND NOT TARGET TIFF::TIFF AND TARGET TIFF::tiff)
+    add_library(TIFF::TIFF INTERFACE IMPORTED)
+    set_target_properties(TIFF::TIFF PROPERTIES INTERFACE_LINK_LIBRARIES TIFF::tiff)
+  endif()
+  if (GeoTIFF_FOUND AND TIFF_FOUND)
+    add_compile_definitions(ENABLE_GEOTIFF)
+    set(GTIFF_TARGETS TIFF::TIFF geotiff_library)
+    message(STATUS "libgeotiff support is enabled")
+  else()
+    message(WARNING "Unable to enable libgeotiff support")
+  endif()
 endif()
+
+set(lz4_target "")
+if (ENABLE_LZ4)
+  pkg_check_modules(LZ4 IMPORTED_TARGET liblz4)
+  if (LZ4_FOUND)
+    target_compile_definitions(PkgConfig::LZ4 INTERFACE ENABLE_LZ4)
+    set(lz4_target PkgConfig::LZ4)
+  else()
+    message(WARNING "Unable to enable liblz4 support")
+  endif()
+endif()
+
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG OFF)
+
+# libprime_server
+# see https://gitlab.kitware.com/cmake/cmake/-/issues/19467
+set(libprime_server_targets "")
+if(ENABLE_SERVICES)
+  pkg_check_modules(libprime_server IMPORTED_TARGET libprime_server>=0.6.3)
+  if (libprime_server_FOUND)
+    target_compile_definitions(PkgConfig::libprime_server INTERFACE ENABLE_SERVICES)
+    set(libprime_server_targets PkgConfig::libprime_server)
+  else()
+    set(ENABLE_SERVICES OFF)
+    message(FATAL_ERROR "ENABLE_SERVICES=ON but prime_server not found...")
+  endif()
+endif()
+
 
 ## Mjolnir and associated executables
 if(ENABLE_DATA_TOOLS)
   add_compile_definitions(DATA_TOOLS)
+  # keep sqlite3 with cmake find_package(), as OSX needs our own FindSqlite3.cmake
+  # otherwise the system sqlite3 is found which doesn't allow for spatialite
   find_package(SQLite3 REQUIRED)
-  find_package(SpatiaLite REQUIRED)
-  find_package(LuaJIT)
-  add_library(Lua::Lua INTERFACE IMPORTED)
-  set_target_properties(Lua::Lua PROPERTIES
-    INTERFACE_LINK_LIBRARIES "${LUA_LIBRARIES}"
-    INTERFACE_INCLUDE_DIRECTORIES "${LUA_INCLUDE_DIR}")
+  pkg_check_modules(SpatiaLite REQUIRED IMPORTED_TARGET spatialite)
+  # make sure we can build tz.sqlite
+  find_program(SPATIALITE_TOOL_EXECUTABLE NAMES spatialite_tool)
+  find_program(SPATIALITE_EXECUTABLE NAMES spatialite)
+  if(NOT SPATIALITE_TOOL_EXECUTABLE OR NOT SPATIALITE_EXECUTABLE)
+    message(FATAL_ERROR "spatialite-tools not found: need both 'spatialite_tool' and 'spatialite', install the correct package for your system.")
+  endif()
+  pkg_check_modules(LuaJIT REQUIRED IMPORTED_TARGET luajit)
+  pkg_check_modules(GEOS REQUIRED IMPORTED_TARGET geos)
+  pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
+  pkg_check_modules(EXPAT IMPORTED_TARGET expat)
 endif()
 
 if (ENABLE_THREAD_SAFE_TILE_REF_COUNT)
@@ -233,44 +296,21 @@ endif ()
 ## libvalhalla
 add_subdirectory(src)
 
-## Python bindings
-if(ENABLE_PYTHON_BINDINGS)
-  # favors Py3, falls back to Py2
-  find_package(Python COMPONENTS Development Interpreter)
-  if (Python_FOUND)
-    add_subdirectory(src/bindings/python)
-    install(FILES COPYING CHANGELOG.md
-      DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/python-valhalla"
-      COMPONENT python)
-  else()
-    set(ENABLE_PYTHON_BINDINGS OFF)
-    message(WARNING "Skipping Python bindings... Install a development Python version including headers to compile the bindings.")
-  endif()
+if(ENABLE_NODE_BINDINGS)
+  add_subdirectory(src/bindings/nodejs)
 endif()
 
 ## Executable targets
-function(get_source_path PATH NAME)
-  if(EXISTS ${VALHALLA_SOURCE_DIR}/src/${NAME}.cc)
-    set(${PATH} ${VALHALLA_SOURCE_DIR}/src/${NAME}.cc PARENT_SCOPE)
-  elseif(EXISTS ${VALHALLA_SOURCE_DIR}/src/meili/${NAME}.cc)
-    set(${PATH} ${VALHALLA_SOURCE_DIR}/src/meili/${NAME}.cc PARENT_SCOPE)
-  elseif(EXISTS ${VALHALLA_SOURCE_DIR}/src/mjolnir/${NAME}.cc)
-    set(${PATH} ${VALHALLA_SOURCE_DIR}/src/mjolnir/${NAME}.cc PARENT_SCOPE)
-  else()
-    message(FATAL_ERROR "no source path for ${NAME}")
-  endif()
-endfunction()
 
 ## Valhalla programs
-set(valhalla_programs valhalla_run_map_match valhalla_benchmark_loki valhalla_benchmark_skadi
-  valhalla_run_isochrone valhalla_run_route valhalla_benchmark_adjacency_list valhalla_run_matrix
-  valhalla_path_comparison valhalla_export_edges valhalla_expand_bounding_box valhalla_service)
+set(valhalla_programs
+    valhalla_export_edges valhalla_expand_bounding_box valhalla_service)
 
 ## Valhalla data tools
 set(valhalla_data_tools valhalla_build_statistics valhalla_ways_to_edges valhalla_validate_transit
   valhalla_benchmark_admins valhalla_build_connectivity	valhalla_build_tiles valhalla_build_admins
-  valhalla_convert_transit valhalla_fetch_transit valhalla_ingest_transit valhalla_query_transit valhalla_add_predicted_traffic
-  valhalla_assign_speeds valhalla_add_elevation)
+  valhalla_convert_transit valhalla_ingest_transit valhalla_query_transit valhalla_add_predicted_traffic
+  valhalla_assign_speeds valhalla_add_elevation valhalla_build_landmarks valhalla_add_landmarks)
 
 ## Valhalla services
 set(valhalla_services valhalla_loki_worker valhalla_odin_worker valhalla_thor_worker)
@@ -281,11 +321,8 @@ if(ENABLE_TOOLS)
     add_executable(${program} ${path})
     set_target_properties(${program} PROPERTIES FOLDER "Tools")
     create_source_groups("Source Files" ${path})
-    target_link_libraries(${program} valhalla)
-    target_include_directories(${program} PUBLIC ${VALHALLA_SOURCE_DIR}/third_party/cxxopts/include)
-    if(MSVC)
-      target_link_libraries(${program} ${CURL_LIBRARIES})
-    endif()
+    target_link_libraries(${program} valhalla $<$<BOOL:${ENABLE_COVERAGE}>:gcov>)
+    target_include_directories(${program} PRIVATE ${cxxopts_include_dir})
     install(TARGETS ${program} DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime)
   endforeach()
 endif()
@@ -296,21 +333,16 @@ if(ENABLE_DATA_TOOLS)
     add_executable(${program} ${path})
     create_source_groups("Source Files" ${path})
     set_target_properties(${program} PROPERTIES FOLDER "Data Tools")
-    target_include_directories(${program} PUBLIC ${VALHALLA_SOURCE_DIR}/third_party/cxxopts/include)
-    target_link_libraries(${program} valhalla)
-    if (LUAJIT_FOUND AND APPLE AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    target_include_directories(${program} PRIVATE ${cxxopts_include_dir})
+    target_link_libraries(${program} valhalla $<$<BOOL:${ENABLE_COVERAGE}>:gcov>)
+    if (LuaJIT_FOUND AND APPLE AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
       # Using LuaJIT on macOS on Intel processors requires a couple of extra linker flags
       target_link_options(${program} PUBLIC -pagezero_size 10000 -image_base 100000000)
-    endif()
-    if(MSVC)
-      target_link_libraries(${program} ${CURL_LIBRARIES})
     endif()
     install(TARGETS ${program} DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime)
   endforeach()
 
   # Target-specific dependencies
-  find_package(GEOS)
-  target_link_libraries(valhalla_build_admins GEOS::GEOS)
   target_sources(valhalla_build_statistics
     PUBLIC
       ${VALHALLA_SOURCE_DIR}/src/mjolnir/statistics.cc
@@ -322,17 +354,31 @@ if(ENABLE_SERVICES)
     add_executable(${program} src/${program}.cc)
     create_source_groups("Source Files" src/${program}.cc)
     set_target_properties(${program} PROPERTIES FOLDER "Services")
-    target_link_libraries(${program} valhalla)
-    target_include_directories(${program} PUBLIC ${VALHALLA_SOURCE_DIR}/third_party/cxxopts/include)
+    target_link_libraries(${program} valhalla $<$<BOOL:${ENABLE_COVERAGE}>:gcov>)
     install(TARGETS ${program} DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime)
   endforeach()
 endif()
 
+## Python bindings
+# needs to be after defining the tool targets above
+if(ENABLE_PYTHON_BINDINGS)
+  set(Python_FIND_STRATEGY LOCATION)
+  set(Python_FIND_REGISTRY NEVER)
+  set(Python_FIND_IMPLEMENTATIONS CPython)
+  set(Python_FIND_VIRTUALENV ONLY)
+  find_package(Python COMPONENTS Interpreter Development Development.Module Development.SABIModule)
+  add_subdirectory(src/bindings/python)
+  if (NOT Python_FOUND)
+    set(ENABLE_PYTHON_BINDINGS OFF)
+    message(WARNING "Python development version not found, skipping Python bindings...")
+  endif()
+endif()
+
 # add the scripts to the build folder as well
-foreach(script valhalla_build_config valhalla_build_elevation valhalla_build_transit
+foreach(script valhalla_build_config valhalla_build_elevation
   valhalla_build_extract valhalla_build_timezones)
   configure_file(${VALHALLA_SOURCE_DIR}/scripts/${script} ${CMAKE_BINARY_DIR}/${script} COPYONLY)
-  
+
   install(
     FILES
       scripts/${script}
@@ -349,13 +395,38 @@ install(FILES COPYING CHANGELOG.md
   DESTINATION "${CMAKE_INSTALL_DOCDIR}"
   COMPONENT runtime)
 
-if(ENABLE_TESTS)
+# install third_party
+install(DIRECTORY ${rapidjson_include_dir}/rapidjson
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/valhalla/third_party")
+install(DIRECTORY ${date_include_dir}/date
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/valhalla/third_party")
+if (WIN32)
+  install(FILES ${dirent_include_dir}/dirent.h
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/valhalla/third_party")
+endif()
+
+if(ENABLE_TESTS OR INSTALL_TEST_LIB)
   add_subdirectory(test)
 endif()
 
-# NOTE(mookerji): Windows CI seems to break on the gbench build, so shelve Win32 support for now.
-if(ENABLE_BENCHMARKS AND ENABLE_DATA_TOOLS AND NOT WIN32)
-  add_subdirectory(bench)
+## Coverage report targets
+if(ENABLE_COVERAGE)
+  find_program(GENHTML_PATH NAMES genhtml genhtml.perl genhtml.bat)
+  if(NOT GENHTML_PATH)
+    message(FATAL_ERROR "no genhtml installed")
+  endif()
+
+  set(FASTCOV_PATH ${VALHALLA_SOURCE_DIR}/third_party/fastcov/fastcov.py)
+  add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/coverage.info
+    COMMAND ${FASTCOV_PATH} -d . --exclude /usr/ third_party/ ${CMAKE_CURRENT_BINARY_DIR}/ --lcov -o coverage.info
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS check)
+
+  add_custom_target(coverage
+    COMMAND ${GENHTML_PATH} --prefix ${CMAKE_CURRENT_BINARY_DIR} --output-directory coverage --title "Test Coverage" --legend --show-details coverage.info --ignore-errors=negative
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/coverage.info)
+  set_target_properties(coverage PROPERTIES FOLDER "Tests")
 endif()
 
 ## Packaging via CPack
@@ -371,7 +442,7 @@ set(CPACK_RESOURCE_FILE_LICENSE "${VALHALLA_SOURCE_DIR}/LICENSE.md")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "OpenStreetMap Routing API
  A set of routing APIs designed around OSM map data using
  dynamic costing and a tiled data structure")
-  set(CPACK_COMPONENT_PYHON_DESCRIPTION "OpenStreetMap Routing Python Bindings
+  set(CPACK_COMPONENT_PYTHON_DESCRIPTION "OpenStreetMap Routing Python Bindings
  A set routing APIs designed around OSM map data using
  dynamic costing and a tiled data structure and
  accompanying tools and services used to analyse and
@@ -414,3 +485,6 @@ endif()
 set(CPACK_PROJECT_CONFIG_FILE ${VALHALLA_SOURCE_DIR}/cmake/CPackConfig.cmake)
 set(CPACK_DEBIAN_PACKAGE_DEBUG OFF)
 include(CPack)
+
+configure_file(cmake/uninstall.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/valhalla_uninstall.cmake @ONLY)
+add_custom_target(uninstall COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/valhalla_uninstall.cmake)

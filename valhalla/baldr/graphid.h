@@ -1,14 +1,13 @@
 #ifndef VALHALLA_BALDR_GRAPHID_H_
 #define VALHALLA_BALDR_GRAPHID_H_
 
+#include <valhalla/baldr/graphconstants.h>
+#include <valhalla/baldr/rapidjson_fwd.h>
+
 #include <cstdint>
-#include <functional>
-#include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
-
-#include <valhalla/baldr/graphconstants.h>
-#include <valhalla/baldr/json.h>
 
 namespace valhalla {
 namespace baldr {
@@ -71,6 +70,15 @@ public:
    * @param value all the various bits rolled into one
    */
   explicit GraphId(const uint64_t value) : value(value) {
+    if (tileid() > kMaxGraphTileId) {
+      throw std::logic_error("Tile id out of valid range");
+    }
+    if (level() > kMaxGraphHierarchy) {
+      throw std::logic_error("Level out of valid range");
+    }
+    if (id() > kMaxGraphId) {
+      throw std::logic_error("Id out of valid range");
+    }
   }
 
   /**
@@ -91,10 +99,19 @@ public:
   }
 
   /**
+   * Constructs a tile's base GraphId (tileid and level, within-tile id 0) from the full path to
+   * a tile file. The path must use the platform's preferred separator and contain at least one.
+   * @param  fname  Full path to the tile file.
+   * @return Returns the tile's base GraphId.
+   * @throws std::runtime_error if the path does not encode a (potentially) valid tile id.
+   */
+  static GraphId FromTilePath(const std::string& fname);
+
+  /**
    * Gets the tile Id.
    * @return   Returns the tile Id.
    */
-  uint32_t tileid() const {
+  inline uint32_t tileid() const {
     return (value & 0x1fffff8) >> 3;
   }
 
@@ -102,7 +119,7 @@ public:
    * Gets the hierarchy level.
    * @return   Returns the level.
    */
-  uint32_t level() const {
+  inline uint32_t level() const {
     return (value & 0x7);
   }
 
@@ -110,7 +127,7 @@ public:
    * Gets the identifier within the hierarchy level.
    * @return   Returns the unique identifier within the level.
    */
-  uint32_t id() const {
+  inline uint32_t id() const {
     return (value & 0x3ffffe000000) >> 25;
   }
 
@@ -131,14 +148,15 @@ public:
    * @return boolean true if the id is valid.
    */
   explicit inline operator bool() const {
-    return Is_Valid();
+    return is_valid();
   }
 
   /**
    * Returns true if the id is valid
    * @return boolean true if the id is valid
    */
-  bool Is_Valid() const {
+  bool is_valid() const {
+    // TODO: make this strict it should check the tile hierarchy not bit field widths
     return value != kInvalidGraphId;
   }
 
@@ -147,7 +165,7 @@ public:
    * Construct a new GraphId with the Id portion omitted.
    * @return graphid with only tileid and level included
    */
-  GraphId Tile_Base() const {
+  GraphId tile_base() const {
     return GraphId((value & 0x1ffffff));
   }
 
@@ -155,15 +173,15 @@ public:
    * Returns a value indicating the tile (level and tile id) of the graph Id.
    * @return  Returns a 32 bit value.
    */
-  uint32_t tile_value() const {
+  inline uint32_t tile_value() const {
     return (value & 0x1ffffff);
   }
 
   /**
    * The json representation of the id
-   * @return  json
+   * @param writer The writer json object to represent the id
    */
-  json::Value json() const;
+  void json(rapidjson::writer_wrapper_t& writer) const;
 
   /**
    * Post increments the id.
@@ -190,12 +208,31 @@ public:
   }
 
   /**
+   * Advances the id
+   */
+  GraphId& operator+=(uint32_t offset) {
+    set_id(id() + offset);
+    return *this;
+  }
+
+  /**
    * Less than operator for sorting.
    * @param  rhs  Right hand side graph Id for comparison.
    * @return  Returns true if this GraphId is less than the right hand side.
    */
   bool operator<(const GraphId& rhs) const {
     return value < rhs.value;
+  }
+
+  /**
+   * cache-friendly comparison operator.
+   */
+  static bool cache_comparator(const GraphId a, const GraphId b) {
+    if (a.level() != b.level())
+      return a.level() < b.level();
+    if (a.tileid() != b.tileid())
+      return a.tileid() < b.tileid();
+    return a.id() < b.id();
   }
 
   // Operator EqualTo.

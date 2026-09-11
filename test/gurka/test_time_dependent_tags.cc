@@ -1,5 +1,4 @@
 #include "gurka.h"
-#include "proto/api.pb.h"
 
 #include <gtest/gtest.h>
 
@@ -58,7 +57,7 @@ TEST_F(TimeDependentTags, HourRestrictions) {
                         "test/data/gurka_time_dependent_restrictions_hour",
                         {{"mjolnir.timezone", VALHALLA_BUILD_DIR "test/data/tz.sqlite"}});
 
-  for (int x = 0; x < working_hours.size(); ++x) {
+  for (size_t x = 0; x < working_hours.size(); ++x) {
     auto result =
         gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto",
                          {{"/date_time/type", "1"}, {"/date_time/value", working_hours.at(x)}});
@@ -81,7 +80,7 @@ TEST_F(TimeDependentTags, DayRestrictions) {
                         "test/data/gurka_time_dependent_restrictions_day",
                         {{"mjolnir.timezone", VALHALLA_BUILD_DIR "test/data/tz.sqlite"}});
 
-  for (int x = 0; x < working_hours.size(); ++x) {
+  for (size_t x = 0; x < working_hours.size(); ++x) {
     auto result =
         gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto",
                          {{"/date_time/type", "1"}, {"/date_time/value", working_hours.at(x)}});
@@ -103,7 +102,7 @@ TEST_F(TimeDependentTags, DayAndHourRestrictions) {
                         "test/data/gurka_time_dependent_restrictions_day_and_hour",
                         {{"mjolnir.timezone", VALHALLA_BUILD_DIR "test/data/tz.sqlite"}});
 
-  for (int x = 0; x < working_hours.size(); ++x) {
+  for (size_t x = 0; x < working_hours.size(); ++x) {
     auto result =
         gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto",
                          {{"/date_time/type", "1"}, {"/date_time/value", working_hours.at(x)}});
@@ -125,7 +124,7 @@ TEST_F(TimeDependentTags, ConditionalEdgeRestriction) {
                         "test/data/gurka_time_dependent_restrictions_day_and_hour",
                         {{"mjolnir.timezone", VALHALLA_BUILD_DIR "test/data/tz.sqlite"}});
 
-  for (int x = 0; x < working_hours.size(); ++x) {
+  for (size_t x = 0; x < working_hours.size(); ++x) {
     auto result =
         gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto",
                          {{"/date_time/type", "1"}, {"/date_time/value", working_hours.at(x)}});

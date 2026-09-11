@@ -1,9 +1,12 @@
+#include "baldr/verbal_text_formatter.h"
+
+#include <optional>
 #include <string>
 
-#include <boost/optional.hpp>
-
-#include "baldr/verbal_text_formatter.h"
-#include "midgard/util.h"
+namespace {
+// Regular expression to find numbers
+const std::regex kNumberSplitRegex("(\\D*)(\\d+)(\\D*)");
+} // namespace
 
 namespace valhalla {
 namespace baldr {
@@ -20,7 +23,7 @@ std::string VerbalTextFormatter::Format(const std::unique_ptr<baldr::StreetName>
                                         const odin::MarkupFormatter* markup_formatter) const {
   // Handle the phoneme markup formatting a street name
   if (markup_formatter) {
-    boost::optional<std::string> phoneme_markup_string =
+    std::optional<std::string> phoneme_markup_string =
         markup_formatter->FormatPhonemeElement(street_name);
     // If phoneme markup string exists then use it
     if (phoneme_markup_string) {
@@ -38,7 +41,7 @@ std::string VerbalTextFormatter::Format(const odin::Sign& sign,
                                         const odin::MarkupFormatter* markup_formatter) const {
   // Handle the phoneme markup formatting for a sign
   if (markup_formatter) {
-    boost::optional<std::string> phoneme_markup_string = markup_formatter->FormatPhonemeElement(sign);
+    std::optional<std::string> phoneme_markup_string = markup_formatter->FormatPhonemeElement(sign);
     // If phoneme markup string exists then use it
     if (phoneme_markup_string) {
       return *phoneme_markup_string;

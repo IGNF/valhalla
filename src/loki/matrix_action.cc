@@ -3,21 +3,11 @@
 
 #include <unordered_map>
 
-#include "baldr/datetime.h"
-#include "baldr/rapidjson_utils.h"
-#include "baldr/tilehierarchy.h"
-#include "midgard/logging.h"
-#include "tyr/actor.h"
-
 using namespace valhalla;
-using namespace valhalla::tyr;
 using namespace valhalla::baldr;
 using namespace valhalla::loki;
 
 namespace {
-midgard::PointLL to_ll(const valhalla::Location& l) {
-  return midgard::PointLL{l.ll().lng(), l.ll().lat()};
-}
 
 void check_distance(Api& request,
                     float matrix_max_distance,
@@ -45,7 +35,7 @@ void check_distance(Api& request,
       if (static_cast<size_t>(path_distance) > max_timedep_distance) {
         source.set_date_time("");
         target.set_date_time("");
-        if (!added_warning) {
+        if (max_timedep_distance && !added_warning) {
           add_warning(request, 200);
           added_warning = true;
         }
@@ -53,6 +43,7 @@ void check_distance(Api& request,
     }
   }
 }
+
 } // namespace
 
 namespace valhalla {
@@ -61,12 +52,12 @@ namespace loki {
 void loki_worker_t::init_matrix(Api& request) {
   // we require sources and targets
   auto& options = *request.mutable_options();
-  if (options.action() == Options::sources_to_targets) {
-    parse_locations(options.mutable_sources(), valhalla_exception_t{112});
-    parse_locations(options.mutable_targets(), valhalla_exception_t{112});
+  if (options.action() == Options::sources_to_targets || options.action() == Options::expansion) {
+    parse_locations(options.mutable_sources(), request, valhalla_exception_t{112});
+    parse_locations(options.mutable_targets(), request, valhalla_exception_t{112});
   } // optimized route uses locations but needs to do a matrix
   else {
-    parse_locations(options.mutable_locations(), valhalla_exception_t{112});
+    parse_locations(options.mutable_locations(), request, valhalla_exception_t{112});
     if (options.locations_size() < 2) {
       throw valhalla_exception_t{120};
     };
@@ -80,15 +71,9 @@ void loki_worker_t::init_matrix(Api& request) {
   if (options.sources_size() < 1) {
     throw valhalla_exception_t{121};
   };
-  for (auto& s : *options.mutable_sources()) {
-    s.clear_heading();
-  }
   if (options.targets_size() < 1) {
     throw valhalla_exception_t{122};
   };
-  for (auto& t : *options.mutable_targets()) {
-    t.clear_heading();
-  }
 
   // no locations!
   options.clear_locations();
@@ -120,31 +105,31 @@ void loki_worker_t::matrix(Api& request) {
   check_distance(request, max_matrix_distance.find(costing_name)->second, max_location_distance,
                  max_timedep_dist_matrix);
 
+  // check distance for hierarchy pruning
+  check_hierarchy_distance(request);
+
   // correlate the various locations to the underlying graph
-  auto sources_targets = PathLocation::fromPBF(options.sources());
-  auto st = PathLocation::fromPBF(options.targets());
-  sources_targets.insert(sources_targets.end(), std::make_move_iterator(st.begin()),
-                         std::make_move_iterator(st.end()));
+  google::protobuf::RepeatedPtrField<Location> sources_targets;
+  sources_targets.MergeFrom(options.sources());
+  sources_targets.MergeFrom(options.targets());
 
   // correlate the various locations to the underlying graph
   std::unordered_map<size_t, size_t> color_counts;
   try {
-    const auto searched = loki::Search(sources_targets, *reader, costing);
-    for (size_t i = 0; i < sources_targets.size(); ++i) {
+    search_.search(sources_targets, mode_costing[static_cast<size_t>(mode)]);
+    for (int i = 0; i < sources_targets.size(); ++i) {
       const auto& l = sources_targets[i];
-      const auto& projection = searched.at(l);
-      PathLocation::toPBF(projection,
-                          i < static_cast<size_t>(options.sources_size())
-                              ? options.mutable_sources(i)
-                              : options.mutable_targets(i -
-                                                        static_cast<size_t>(options.sources_size())),
-                          *reader);
+      if (i < options.sources_size()) {
+        options.mutable_sources(i)->CopyFrom(l);
+      } else {
+        options.mutable_targets(i - options.sources_size())->CopyFrom(l);
+      }
       // TODO: get transit level for transit costing
       // TODO: if transit send a non zero radius
       if (!connectivity_map) {
         continue;
       }
-      auto colors = connectivity_map->get_colors(TileHierarchy::levels().back().level, projection, 0);
+      auto colors = connectivity_map->get_colors(TileHierarchy::levels().back(), l, 0);
       for (auto& color : colors) {
         auto itr = color_counts.find(color);
         if (itr == color_counts.cend()) {
@@ -162,7 +147,7 @@ void loki_worker_t::matrix(Api& request) {
   }
   bool connected = false;
   for (const auto& c : color_counts) {
-    if (c.second == sources_targets.size()) {
+    if (static_cast<int>(c.second) == sources_targets.size()) {
       connected = true;
       break;
     }

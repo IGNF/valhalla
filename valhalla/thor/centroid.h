@@ -1,16 +1,12 @@
 #pragma once
 
-#include <cstdint>
-#include <memory>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
-#include <valhalla/midgard/util.h>
 #include <valhalla/sif/costconstants.h>
 #include <valhalla/sif/dynamiccost.h>
 #include <valhalla/thor/dijkstras.h>
 #include <valhalla/thor/pathinfo.h>
+
+#include <cstdint>
+#include <vector>
 
 namespace valhalla {
 namespace thor {
@@ -46,7 +42,7 @@ struct PathIntersection {
 
   /**
    * Equality operator for hashed containers to resolve hash collisions
-   * @param i  the other intersection to compare aginst this one
+   * @param i  the other intersection to compare against this one
    * @return true if i is equal to this intersection
    */
   bool operator==(const PathIntersection& i) const;
@@ -122,7 +118,7 @@ protected:
    * about edges who have been settled which means we can completely ignore this
    */
   virtual void ExpandingNode(baldr::GraphReader&,
-                             graph_tile_ptr,
+                             baldr::graph_tile_ptr,
                              const baldr::NodeInfo*,
                              const sif::EdgeLabel&,
                              const sif::EdgeLabel*) override {
@@ -148,7 +144,7 @@ protected:
    * Tell the expansion how many labels to expect and how many buckets to use
    *
    * @param bucket_count            impacts the number of buckets in the double bucket queue
-   * @param edge_label_reservation  an estimate of the total number of edgelabels for this exapansion
+   * @param edge_label_reservation  an estimate of the total number of edgelabels for this expansion
    */
   virtual void GetExpansionHints(uint32_t& bucket_count,
                                  uint32_t& edge_label_reservation) const override;

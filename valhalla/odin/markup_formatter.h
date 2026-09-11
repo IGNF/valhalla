@@ -1,12 +1,12 @@
 #pragma once
 
-#include <string>
-
-#include <boost/optional.hpp>
-#include <boost/property_tree/ptree.hpp>
-
 #include <valhalla/baldr/streetname.h>
 #include <valhalla/odin/sign.h>
+
+#include <boost/property_tree/ptree.hpp>
+
+#include <optional>
+#include <string>
 
 namespace valhalla {
 namespace odin {
@@ -37,7 +37,7 @@ public:
    * @param  street_name  the street name record to format.
    * @return the street name with phoneme markup if it exists.
    */
-  boost::optional<std::string>
+  std::optional<std::string>
   FormatPhonemeElement(const std::unique_ptr<baldr::StreetName>& street_name) const;
 
   /**
@@ -46,7 +46,7 @@ public:
    * @param  sign  the sign record to format.
    * @return the sign with phoneme markup if it exists.
    */
-  boost::optional<std::string> FormatPhonemeElement(const Sign& sign) const;
+  std::optional<std::string> FormatPhonemeElement(const Sign& sign) const;
 
 protected:
   /**
@@ -60,7 +60,7 @@ protected:
   void FormatQuotes(std::string& markup_string, valhalla::Pronunciation_Alphabet alphabet) const;
 
   std::string FormatPhonemeElement(const std::string& textual_string,
-                                   const boost::optional<baldr::Pronunciation>& pronunciation) const;
+                                   const std::optional<baldr::Pronunciation>& pronunciation) const;
 
   bool markup_enabled_;
   std::string phoneme_format_;

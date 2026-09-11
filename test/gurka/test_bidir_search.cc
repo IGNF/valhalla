@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 using namespace valhalla;
+using namespace valhalla::baldr;
 
 const std::string tile_dir = "test/data/bidir_search";
 
@@ -40,11 +41,16 @@ TEST(StandAlone, exhaust_reverse_search) {
     }
   });
 
-  // Without extending search, the route should not fail due to settting not_thru_pruning_
+  // Without extending search, the route should not fail due to setting not_thru_pruning_
   // to false on the second pass
   map.config.put("thor.extended_search", false);
   auto result = gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto", {});
   gurka::assert::raw::expect_path(result, {"AB", "BC", "CD", "DE", "EF"});
+  // a second pass should emit a warning
+  EXPECT_EQ(result.info().warnings().size(), 1);
+  EXPECT_EQ(result.info().warnings(0).code(), 401);
+  EXPECT_THAT(result.info().warnings(0).description(),
+              testing::HasSubstr("Routing failed on first pass, retrying with relaxed restrictions"));
 
   // Allowing search to extend, finds route
   map.config.put("thor.extended_search", true);
@@ -84,7 +90,7 @@ TEST(StandAlone, exhaust_forward_search) {
     }
   });
 
-  // Without extending search, the route should not fail due to settting not_thru_pruning_
+  // Without extending search, the route should not fail due to setting not_thru_pruning_
   // to false on the second pass
   map.config.put("thor.extended_search", false);
   auto result = gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto", {});
@@ -127,5 +133,6 @@ TEST(StandAlone, failed_search) {
     }
   });
 
-  auto result = gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto", {});
+  [[maybe_unused]] auto result =
+      gurka::do_action(valhalla::Options::route, map, {"A", "F"}, "auto", {});
 }

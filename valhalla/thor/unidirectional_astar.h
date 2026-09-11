@@ -1,22 +1,21 @@
 #pragma once
 
-#include <cstdint>
-#include <memory>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
 #include <valhalla/baldr/double_bucket_queue.h>
 #include <valhalla/baldr/graphid.h>
 #include <valhalla/baldr/graphreader.h>
 #include <valhalla/baldr/time_info.h>
 #include <valhalla/sif/dynamiccost.h>
 #include <valhalla/sif/edgelabel.h>
-#include <valhalla/sif/hierarchylimits.h>
 #include <valhalla/thor/astarheuristic.h>
 #include <valhalla/thor/edgestatus.h>
 #include <valhalla/thor/pathalgorithm.h>
 #include <valhalla/thor/pathinfo.h>
+
+#include <boost/property_tree/ptree.hpp>
+
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace valhalla {
 namespace thor {
@@ -73,15 +72,6 @@ public:
     }
   }
 
-  /**
-   * Set a maximum label count. The path algorithm terminates if this
-   * is exceeded.
-   * @param  max_count  Maximum number of labels to allow.
-   */
-  void set_max_label_count(const uint32_t max_count) {
-    max_label_count_ = max_count;
-  }
-
 protected:
   /**
    * Initializes the hierarchy limits, A* heuristic, and adjacency list.
@@ -120,7 +110,7 @@ protected:
                           const baldr::NodeInfo* nodeinfo,
                           const uint32_t pred_idx,
                           const EdgeMetadata& meta,
-                          const graph_tile_ptr& tile,
+                          const baldr::graph_tile_ptr& tile,
                           const baldr::TimeInfo& time_info,
                           const valhalla::Location& destination,
                           std::pair<int32_t, float>& best_path);
@@ -166,18 +156,17 @@ protected:
    */
   std::vector<PathInfo> FormPath(const uint32_t dest);
 
-  uint32_t max_label_count_; // Max label count to allow
-  sif::TravelMode mode_;     // Current travel mode
-  uint8_t travel_type_;      // Current travel type
+  sif::TravelMode mode_; // Current travel mode
+  uint8_t travel_type_;  // Current travel type
 
   // Hierarchy limits.
-  std::vector<sif::HierarchyLimits> hierarchy_limits_;
+  std::vector<HierarchyLimits> hierarchy_limits_;
 
   // A* heuristic
   AStarHeuristic astarheuristic_;
 
   // Current costing mode
-  std::shared_ptr<sif::DynamicCost> costing_;
+  sif::cost_ptr_t costing_;
 
   // Vector of edge labels (requires access by index).
   std::vector<sif::BDEdgeLabel> edgelabels_;
@@ -186,7 +175,7 @@ protected:
   EdgeStatus edgestatus_;
 
   // Mark if edge is a destination
-  std::unordered_multimap<valhalla::baldr::GraphId, std::reference_wrapper<const valhalla::PathEdge>>
+  std::unordered_multimap<baldr::GraphId, std::reference_wrapper<const valhalla::PathEdge>>
       destinations_;
 
   // Access mode used by the costing method

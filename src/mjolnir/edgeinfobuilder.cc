@@ -1,12 +1,16 @@
-#include <algorithm>
-#include <iostream>
-#include <ostream>
-
+#include "mjolnir/edgeinfobuilder.h"
 #include "baldr/edgeinfo.h"
 #include "baldr/graphconstants.h"
 #include "midgard/encoded.h"
 #include "midgard/logging.h"
-#include "mjolnir/edgeinfobuilder.h"
+#include "midgard/pointll.h"
+#include "mjolnir/util.h"
+
+#include <algorithm>
+#include <list>
+#include <ostream>
+
+using namespace valhalla::baldr;
 
 namespace valhalla {
 namespace mjolnir {
@@ -43,17 +47,22 @@ void EdgeInfoBuilder::set_speed_limit(const uint32_t speed_limit) {
   if (speed_limit == kUnlimitedSpeedLimit) {
     ei_.speed_limit_ = kUnlimitedSpeedLimit;
   } else if (speed_limit > kMaxAssumedSpeed) {
-    LOG_WARN("Exceeding maximum.  Speed limit: " + std::to_string(speed_limit));
     ei_.speed_limit_ = kMaxAssumedSpeed;
   } else {
     ei_.speed_limit_ = speed_limit;
   }
 }
 
+// Sets the elevation flag.
+void EdgeInfoBuilder::set_has_elevation(const bool elevation) {
+  ei_.has_elevation_ = elevation;
+}
+
 // Set the list of name info (offsets, etc.) used by this edge.
 void EdgeInfoBuilder::set_name_info_list(const std::vector<NameInfo>& name_info_list) {
   if (name_info_list.size() > kMaxNamesPerEdge) {
-    LOG_WARN("Tried to exceed max names per edge: " + std::to_string(name_info_list.size()));
+    LOG_DEBUG("Tried to exceed max names per edge: " + std::to_string(name_info_list.size()));
+    build_stats::get().increment(build_stats::kExceededMaxNames);
   } else {
     name_info_list_ = name_info_list;
   }
@@ -62,7 +71,8 @@ void EdgeInfoBuilder::set_name_info_list(const std::vector<NameInfo>& name_info_
 // Add street name info to the list.
 void EdgeInfoBuilder::AddNameInfo(const baldr::NameInfo& info) {
   if (name_info_list_.size() == kMaxNamesPerEdge) {
-    LOG_WARN("Tried to exceed max names per edge");
+    LOG_DEBUG("Tried to exceed max names per edge");
+    build_stats::get().increment(build_stats::kExceededMaxNames);
   } else {
     name_info_list_.push_back(info);
   }
@@ -72,12 +82,21 @@ void EdgeInfoBuilder::AddNameInfo(const baldr::NameInfo& info) {
 template <class shape_container_t> void EdgeInfoBuilder::set_shape(const shape_container_t& shape) {
   encoded_shape_ = midgard::encode7<shape_container_t>(shape);
 }
-template void EdgeInfoBuilder::set_shape<std::vector<PointLL>>(const std::vector<PointLL>&);
-template void EdgeInfoBuilder::set_shape<std::list<PointLL>>(const std::list<PointLL>&);
+template void
+EdgeInfoBuilder::set_shape<std::vector<midgard::PointLL>>(const std::vector<midgard::PointLL>&);
+template void
+EdgeInfoBuilder::set_shape<std::list<midgard::PointLL>>(const std::list<midgard::PointLL>&);
 
 // Set the encoded shape string.
 void EdgeInfoBuilder::set_encoded_shape(const std::string& encoded_shape) {
   std::copy(encoded_shape.begin(), encoded_shape.end(), back_inserter(encoded_shape_));
+}
+
+// Set the encoded elevation vector.
+void EdgeInfoBuilder::set_encoded_elevation(const std::vector<int8_t>& encoded_elevation) {
+  if (!encoded_elevation.empty()) {
+    encoded_elevation_ = std::move(encoded_elevation);
+  }
 }
 
 // Get the size of the edge info (including name offsets and shape string)
@@ -86,6 +105,7 @@ std::size_t EdgeInfoBuilder::BaseSizeOf() const {
   size += (name_info_list_.size() * sizeof(NameInfo));
   size += (encoded_shape_.size() * sizeof(std::string::value_type));
   size += ei_.extended_wayid_size_;
+  size += (encoded_elevation_.size() * sizeof(int8_t));
   return size;
 }
 
@@ -107,18 +127,22 @@ std::ostream& operator<<(std::ostream& os, const EdgeInfoBuilder& eib) {
   auto ei = eib.ei_;
   uint32_t name_count = eib.name_info_list_.size();
   if (name_count > kMaxNamesPerEdge) {
-    LOG_WARN("Exceeding max names per edge: " + std::to_string(name_count));
+    LOG_DEBUG("Exceeding max names per edge: " + std::to_string(name_count));
     name_count = kMaxNamesPerEdge;
   }
   ei.name_count_ = name_count;
 
   // Check if we are exceeding the max encoded size
   if (eib.encoded_shape_.size() > kMaxEncodedShapeSize) {
-    LOG_WARN("Exceeding max encoded shape size: " + std::to_string(eib.encoded_shape_.size()));
+    LOG_DEBUG("Exceeding max encoded shape size: " + std::to_string(eib.encoded_shape_.size()));
+    build_stats::get().increment(build_stats::kExceededMaxShapeSize);
     ei.encoded_shape_size_ = static_cast<uint32_t>(kMaxEncodedShapeSize);
   } else {
     ei.encoded_shape_size_ = static_cast<uint32_t>(eib.encoded_shape_.size());
   }
+
+  // Set the has_elevation flag if encoded_elevation vector is not empty
+  ei.has_elevation_ = !eib.encoded_elevation_.empty();
 
   // Write out the bytes
   os.write(reinterpret_cast<const char*>(&ei), sizeof(ei));
@@ -130,6 +154,10 @@ std::ostream& operator<<(std::ostream& os, const EdgeInfoBuilder& eib) {
   }
   if (ei.extended_wayid_size_ > 1) {
     os.write(reinterpret_cast<const char*>(&eib.extended_wayid3_), sizeof(eib.extended_wayid3_));
+  }
+  if (!eib.encoded_elevation_.empty()) {
+    os.write(reinterpret_cast<const char*>(eib.encoded_elevation_.data()),
+             eib.encoded_elevation_.size());
   }
 
   // Pad to a 4 byte boundary

@@ -1,9 +1,13 @@
 file(GLOB headers ${VALHALLA_SOURCE_DIR}/valhalla/sif/*.h)
 
+# Disable unity build for sif because each cost model defines many constants with similar names.
+if(CMAKE_UNITY_BUILD)
+  set(CMAKE_UNITY_BUILD OFF)
+endif()
+
 set(sources
   autocost.cc
   bicyclecost.cc
-  hierarchylimits.cc
   motorcyclecost.cc
   motorscootercost.cc
   nocost.cc
@@ -13,11 +17,10 @@ set(sources
   dynamiccost.cc
   recost.cc)
 
-if (UNIX AND ENABLE_SINGLE_FILES_WERROR)
-  # Enables stricter compiler checks on a file-by-file basis
-  # which allows us to migrate piecemeal
-  set_source_files_properties(${sources} PROPERTIES COMPILE_FLAGS "-Werror -Wall")
-endif()
+set(system_includes
+  ${date_include_dir}
+  $<$<BOOL:${WIN32}>:${dirent_include_dir}>
+  ${rapidjson_include_dir})
 
 valhalla_module(NAME sif
   SOURCES ${sources}
@@ -26,10 +29,9 @@ valhalla_module(NAME sif
     PUBLIC
       ${VALHALLA_SOURCE_DIR}
       ${VALHALLA_SOURCE_DIR}/valhalla
-      ${VALHALLA_SOURCE_DIR}/third_party/date/include
-      $<$<BOOL:${WIN32}>:${VALHALLA_SOURCE_DIR}/third_party/dirent/include>
-    PRIVATE
-      ${VALHALLA_SOURCE_DIR}/third_party/rapidjson/include
+  SYSTEM_INCLUDE_DIRECTORIES
+    PUBLIC
+      ${system_includes}
   DEPENDS
     valhalla::baldr
     valhalla::proto

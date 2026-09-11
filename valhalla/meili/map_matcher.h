@@ -2,21 +2,18 @@
 #ifndef MMP_MAP_MATCHER_H_
 #define MMP_MAP_MATCHER_H_
 
-#include <unordered_set>
-#include <vector>
-
-#include <valhalla/baldr/graphid.h>
 #include <valhalla/baldr/graphreader.h>
 #include <valhalla/meili/candidate_search.h>
 #include <valhalla/meili/config.h>
 #include <valhalla/meili/emission_cost_model.h>
 #include <valhalla/meili/match_result.h>
 #include <valhalla/meili/measurement.h>
-#include <valhalla/meili/routing.h>
 #include <valhalla/meili/state.h>
 #include <valhalla/meili/topk_search.h>
 #include <valhalla/meili/transition_cost_model.h>
 #include <valhalla/midgard/pointll.h>
+
+#include <vector>
 
 namespace valhalla {
 namespace meili {
@@ -78,10 +75,10 @@ public:
     graphreader_.SetInterrupt(interrupt_);
   }
 
-private:
   std::unordered_map<StateId::Time, std::vector<Measurement>>
   AppendMeasurements(const std::vector<Measurement>& measurements);
 
+private:
   StateId::Time AppendMeasurement(const Measurement& measurement, const float sq_max_search_radius);
 
   void RemoveRedundancies(const std::vector<StateId>& result,
@@ -113,13 +110,13 @@ private:
 
 /**
  * Here we return the vector of edge segments between the source and target states. If its a node to
- * node route (meaning no realy edge is traversed) then we use the target_result to say what edge the
+ * node route (meaning no real edge is traversed) then we use the target_result to say what edge the
  * segment should use
  * @param source         source state to use to find the route
  * @param target         target state which candidate in the next column to fetch the route for
  * @param route          a place to put the edge segments as we create them
  * @param target_result  in case we have a node to node route we have a no-op edge segment to return
- * @return  the vector of segments reprsenting the route between source and target
+ * @return  the vector of segments representing the route between source and target
  */
 bool MergeRoute(const State& source,
                 const State& target,

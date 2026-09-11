@@ -1,31 +1,26 @@
 file(GLOB headers ${VALHALLA_SOURCE_DIR}/valhalla/loki/*.h)
 
 set(sources
-  search.cc
   worker.cc
   height_action.cc
-  locate_action.cc
   reach.cc
-  route_action.cc
   matrix_action.cc
-  isochrone_action.cc
   status_action.cc
-  trace_route_action.cc
   transit_available_action.cc
+  polygon_search.cc
+  isochrone_action.cc
+  height_action.cc
+  locate_action.cc
   node_search.cc
-  polygon_search.cc)
+  route_action.cc
+  search.cc
+  tile_action.cc
+  trace_route_action.cc
+  worker.cc)
 
-if (UNIX AND NOT APPLE AND ENABLE_SINGLE_FILES_WERROR)
-  # Enables stricter compiler checks on a file-by-file basis
-  # which allows us to migrate piecemeal
-  set_source_files_properties(
-    search.cc
-    worker.cc
-    locate_action.cc
-    height_action.cc
-    polygon_search.cc
-  PROPERTIES COMPILE_FLAGS "-Wall -Werror")
-endif ()
+set(system_includes
+  ${date_include_dir}
+  $<$<BOOL:${WIN32}>:${dirent_include_dir}>)
 
 valhalla_module(NAME loki
   SOURCES ${sources}
@@ -34,15 +29,20 @@ valhalla_module(NAME loki
     PUBLIC
       ${VALHALLA_SOURCE_DIR}
       ${VALHALLA_SOURCE_DIR}/valhalla
-      ${VALHALLA_SOURCE_DIR}/third_party/date/include
-      $<$<BOOL:${WIN32}>:${VALHALLA_SOURCE_DIR}/third_party/dirent/include>
     PRIVATE
-      ${VALHALLA_SOURCE_DIR}/third_party/rapidjson/include
+      ${rapidjson_include_dir}
       ${CMAKE_BINARY_DIR}
+  SYSTEM_INCLUDE_DIRECTORIES
+    PUBLIC
+      ${system_includes}
+    PRIVATE
+      ${unordered_dense_include_dir}
+      ${vtzero_include_dirs}
   DEPENDS
+    valhalla::meili
     valhalla::skadi
     valhalla::sif
     valhalla::proto
     ${valhalla_protobuf_targets}
     Boost::boost
-    libprime_server)
+    ${libprime_server_targets})

@@ -1,28 +1,31 @@
 // -*- mode: c++ -*-
 #pragma once
 
+#include "baldr/directededge.h"
+#include "baldr/graphid.h"
 #include "baldr/graphreader.h"
-#include "baldr/rapidjson_utils.h"
+#include "baldr/predictedspeeds.h"
 #include "baldr/traffictile.h"
-#include "config.h"
-#include "mjolnir/graphtilebuilder.h"
+#include "midgard/encoded.h"
+#include "midgard/pointll.h"
+#include "midgard/polyline2.h"
+
+#include <boost/property_tree/ptree_fwd.hpp>
+#include <gmock/gmock-matchers.h>
+#include <gtest/gtest-assertion-result.h>
 
 #include <cmath>
-#include <fstream>
+#include <functional>
 #include <random>
-#include <sstream>
-#include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <vector>
+
 #ifndef _MSC_VER
 #include <sys/mman.h>
 #endif
+
 #include <sys/stat.h>
-
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
-#include <boost/algorithm/string/replace.hpp>
-#include <boost/property_tree/ptree.hpp>
 
 namespace test {
 
@@ -52,6 +55,35 @@ boost::property_tree::ptree
 make_config(const std::string& path_prefix,
             const std::unordered_map<std::string, std::string>& overrides = {},
             const std::unordered_set<std::string>& removes = {});
+
+template <typename container_t>
+testing::AssertionResult shape_equality(const container_t& expected,
+                                        const container_t& actual,
+                                        typename container_t::value_type::first_type tolerance = 1) {
+  auto hd =
+      valhalla::midgard::Polyline2<typename container_t::value_type>::HausdorffDistance(expected,
+                                                                                        actual);
+  if (hd > tolerance)
+    return testing::AssertionFailure() << "shape exceeds tolerance by " << hd - tolerance;
+  return testing::AssertionSuccess();
+}
+
+inline testing::AssertionResult
+encoded_shape_equality(const std::string& expected, const std::string& actual, double tolerance = 1) {
+  auto expected_shp = valhalla::midgard::decode<std::vector<valhalla::midgard::PointLL>>(expected);
+  auto actual_shp = valhalla::midgard::decode<std::vector<valhalla::midgard::PointLL>>(actual);
+  return shape_equality(expected_shp, actual_shp, tolerance);
+}
+
+/**
+ * Deep compares rapidjson::Value, descending into arrays & objects.
+ *
+ * FAIL()s when the both args aren't equal.
+ *
+ * @param j1 the actual JSON
+ * @param j2 the expected JSON
+ */
+void json_equality(const rapidjson::Value& j1, const rapidjson::Value& j2);
 
 /**
  * Generate a new GraphReader that doesn't re-use a previously
@@ -88,11 +120,13 @@ void customize_live_traffic_data(const boost::property_tree::ptree& config,
 
 #ifdef DATA_TOOLS
 using HistoricalTrafficCustomize =
-    std::function<boost::optional<std::array<float, kBucketsPerWeek>>(DirectedEdge&)>;
+    std::function<std::optional<std::array<float, valhalla::baldr::kBucketsPerWeek>>(
+        valhalla::baldr::DirectedEdge&)>;
 void customize_historical_traffic(const boost::property_tree::ptree& config,
                                   const HistoricalTrafficCustomize& cb);
 
-using EdgesCustomize = std::function<void(const GraphId&, DirectedEdge&)>;
+using EdgesCustomize =
+    std::function<void(const valhalla::baldr::GraphId&, valhalla::baldr::DirectedEdge&)>;
 void customize_edges(const boost::property_tree::ptree& config, const EdgesCustomize& setter_cb);
 #endif
 

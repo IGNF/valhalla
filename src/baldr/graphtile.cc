@@ -1,25 +1,20 @@
 #include "baldr/graphtile.h"
-
 #include "baldr/compression_utils.h"
 #include "baldr/curl_tilegetter.h"
-#include "baldr/datetime.h"
 #include "baldr/sign.h"
 #include "baldr/tilehierarchy.h"
-#include "filesystem.h"
+#include "exceptions.h"
+#include "filesystem_utils.h"
 #include "midgard/aabb2.h"
+#include "midgard/logging.h"
 #include "midgard/pointll.h"
 #include "midgard/tiles.h"
+#include "midgard/util.h"
 
-#include <boost/algorithm/string.hpp>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <ctime>
+#include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <locale>
 #include <string>
 #include <thread>
 #include <utility>
@@ -97,7 +92,7 @@ graph_tile_ptr GraphTile::DecompressTile(const GraphId& graphid,
 graph_tile_ptr GraphTile::Create(const std::string& tile_dir,
                                  const GraphId& graphid,
                                  std::unique_ptr<const GraphMemory>&& traffic_memory) {
-  if (!graphid.Is_Valid()) {
+  if (!graphid.is_valid()) {
     LOG_ERROR("Failed to build GraphTile. Error: GraphId is invalid");
     return nullptr;
   }
@@ -113,8 +108,10 @@ graph_tile_ptr GraphTile::Create(const std::string& tile_dir,
   }
 
   // Open to the end of the file so we can immediately get size
-  const std::string file_location =
-      tile_dir + filesystem::path::preferred_separator + FileSuffix(graphid.Tile_Base());
+  std::filesystem::path file_location{tile_dir};
+  file_location /= FileSuffix(graphid.tile_base());
+
+  // first try to open uncompressed, then try compressed file
   std::ifstream file(file_location, std::ios::in | std::ios::binary | std::ios::ate);
   if (file.is_open()) {
     // Read binary file into memory. TODO - protect against failure to allocate memory
@@ -130,7 +127,8 @@ graph_tile_ptr GraphTile::Create(const std::string& tile_dir,
   }
 
   // Try to load a gzipped tile
-  std::ifstream gz_file(file_location + ".gz", std::ios::in | std::ios::binary | std::ios::ate);
+  std::ifstream gz_file(file_location.replace_extension(SUFFIX_COMPRESSED),
+                        std::ios::in | std::ios::binary | std::ios::ate);
   if (gz_file.is_open()) {
     // Read the compressed file into memory
     size_t filesize = gz_file.tellg();
@@ -179,32 +177,33 @@ GraphTile::GraphTile(const std::string& tile_dir,
 
 GraphTile::GraphTile() = default;
 
-void GraphTile::SaveTileToFile(const std::vector<char>& tile_data, const std::string& disk_location) {
+void GraphTile::SaveTileToFile(const std::vector<char>& tile_data,
+                               const std::filesystem::path& disk_location) {
   // At first we save tile to a temporary file and then move it
   // so we can avoid cases when another thread could read partially written file.
-  auto dir = filesystem::path(disk_location);
-  dir.replace_filename("");
 
   bool success = true;
-  filesystem::path tmp_location;
-  if (filesystem::create_directories(dir)) {
+  std::filesystem::path tmp_location;
+  std::error_code ec;
+  if (std::filesystem::create_directories(disk_location.parent_path())) {
     // Technically this is a race condition but its super unlikely (famous last words)
-    while (tmp_location.string().empty() || filesystem::exists(tmp_location))
-      tmp_location = disk_location + GenerateTmpSuffix();
-    std::ofstream file(tmp_location.string(), std::ios::out | std::ios::binary | std::ios::ate);
+    while (tmp_location.string().empty() || std::filesystem::exists(tmp_location))
+      tmp_location = disk_location;
+    tmp_location += GenerateTmpSuffix();
+    std::ofstream file(tmp_location, std::ios::out | std::ios::binary | std::ios::ate);
     file.write(tile_data.data(), tile_data.size());
     file.close();
     if (file.fail())
       success = false;
-    int err = std::rename(tmp_location.c_str(), disk_location.c_str());
-    if (err)
+    std::filesystem::rename(tmp_location, disk_location, ec);
+    if (ec)
       success = false;
   } else {
-    LOG_ERROR("Failed to create directory " + disk_location);
+    LOG_ERROR("Failed to create directory " + disk_location.string());
   }
 
   if (!success)
-    filesystem::remove(tmp_location);
+    std::filesystem::remove(tmp_location);
 }
 
 void store(const std::string& cache_location,
@@ -213,36 +212,90 @@ void store(const std::string& cache_location,
            const std::vector<char>& raw_data) {
   if (!cache_location.empty()) {
     auto suffix =
-        valhalla::baldr::GraphTile::FileSuffix(graphid.Tile_Base(),
+        valhalla::baldr::GraphTile::FileSuffix(graphid.tile_base(),
                                                (tile_getter->gzipped()
                                                     ? valhalla::baldr::SUFFIX_COMPRESSED
                                                     : valhalla::baldr::SUFFIX_NON_COMPRESSED));
-    auto disk_location = cache_location + filesystem::path::preferred_separator + suffix;
-    filesystem::save(disk_location, raw_data);
+    // Windows apparently can't "+" string & char (which "preferred_separator" is on win)
+    std::filesystem::path disk_location{cache_location};
+    disk_location.append(suffix);
+    filesystem_utils::save(disk_location, raw_data);
   }
 }
 
 graph_tile_ptr GraphTile::CacheTileURL(const std::string& tile_url,
                                        const GraphId& graphid,
                                        tile_getter_t* tile_getter,
-                                       const std::string& cache_location) {
+                                       const std::string& tile_dir,
+                                       uint64_t range_offset,
+                                       uint64_t range_size,
+                                       const std::filesystem::path& id_txt_path,
+                                       std::optional<uint64_t> id_checksum) {
   // Don't bother with invalid ids
-  if (!graphid.Is_Valid() || graphid.level() > TileHierarchy::get_max_level() || !tile_getter) {
+  if (!graphid.is_valid() || graphid.level() > TileHierarchy::get_max_level() || !tile_getter) {
     return nullptr;
   }
 
-  auto fname = valhalla::baldr::GraphTile::FileSuffix(graphid.Tile_Base(),
-                                                      valhalla::baldr::SUFFIX_NON_COMPRESSED, false);
-  auto result = tile_getter->get(baldr::make_single_point_url(tile_url, fname));
+  auto check_tile_checksum = [&](const GraphTileHeader& header) {
+    // only the build id (identical across the tileset) tells us whether the remote was rebuilt; the
+    // per-tile hash differs from tile to tile
+    uint64_t build_id = header.build_id();
+    if (build_id == 0 && header.tile_checksum() == 0) {
+      // loading tilesets built by older valhalla commits has the potential to corrupt the GraphReader
+      LOG_WARN(
+          "Remote tile is missing the checksum attribute, please update the tile building valhalla instance");
+    }
+    if (!tile_dir.empty()) {
+      if (!id_checksum) {
+        // first tile in a fresh tile_dir: record the URL & tileset build id
+        static std::mutex mutex;
+        std::lock_guard lock{mutex};
+        std::ofstream id_txt_file(id_txt_path, std::ios::binary);
+        if (id_txt_file) {
+          id_txt_file << tile_url << std::endl;
+          id_txt_file << build_id << std::endl;
+        }
+      } else if (build_id != *id_checksum) {
+        LOG_ERROR("Remote tar file has changed, remove the tile_dir and restart.");
+        throw valhalla_exception_t(446);
+      }
+    }
+  };
+
+  LOG_INFO("Downloading tile " + std::to_string(graphid) + " from " + tile_url);
+
+  tile_getter_t::GET_response_t result;
+  if (range_size == 0) {
+    // requesting plain tiles
+    auto fname =
+        valhalla::baldr::GraphTile::FileSuffix(graphid.tile_base(),
+                                               valhalla::baldr::SUFFIX_NON_COMPRESSED, false);
+    result = tile_getter->get(baldr::make_single_point_url(tile_url, fname));
+  } else {
+    // or HTTP range on a tar
+    result = tile_getter->get(tile_url, range_offset, range_size);
+  }
+
   if (result.status_ != tile_getter_t::status_code_t::SUCCESS) {
     return nullptr;
   }
+
+  if (!tile_getter->gzipped()) {
+    // inspect the header for the checksum
+    // it's a POD type and thus trivially copyable
+    GraphTileHeader header;
+    std::memcpy(&header, result.bytes_.data(), sizeof(header));
+    check_tile_checksum(header);
+  }
+
   // try to cache it on disk so we dont have to keep fetching it from url
-  store(cache_location, graphid, tile_getter, result.bytes_);
+  store(tile_dir, graphid, tile_getter, result.bytes_);
 
   // turn the memory into a tile
   if (tile_getter->gzipped()) {
-    return DecompressTile(graphid, result.bytes_);
+    auto tile = DecompressTile(graphid, result.bytes_);
+    check_tile_checksum(*tile.get()->header());
+    return tile;
   }
 
   return graph_tile_ptr{
@@ -274,7 +327,10 @@ void GraphTile::Initialize(const GraphId& graphid) {
                              " vs raw tile data size = " + std::to_string(tile_size) +
                              ". Tile file might me corrupted");
 
-  // TODO check version
+  if (int current_version = header_->version()[0] - '0'; current_version != VALHALLA_VERSION_MAJOR) {
+    LOG_WARN("Tiles were built with version " + std::to_string(current_version) +
+             ", current process runs version " + std::to_string(VALHALLA_VERSION_MAJOR));
+  }
 
   // Set a pointer to the node list
   nodes_ = reinterpret_cast<NodeInfo*>(ptr);
@@ -333,6 +389,10 @@ void GraphTile::Initialize(const GraphId& graphid) {
   // Set a pointer to the edge bin list
   edge_bins_ = reinterpret_cast<GraphId*>(ptr);
 
+  // We store the bounding circles offset in the header
+  bounding_circles_ =
+      reinterpret_cast<DiscretizedBoundingCircle*>(tile_ptr + header_->bounding_circle_offset());
+
   // Start of forward restriction information and its size
   complex_restriction_forward_ = tile_ptr + header_->complex_restriction_forward_offset();
   complex_restriction_forward_size_ =
@@ -378,6 +438,9 @@ void GraphTile::Initialize(const GraphId& graphid) {
   if (graphid.level() == 3) {
     AssociateOneStopIds(graphid);
   }
+
+  // `base_ll()` has some non-trivial calculations, so cache it
+  base_ll_ = header_->base_ll();
 }
 
 // For transit tiles we need to save off the pair<tileid,lineid> lookup via
@@ -396,7 +459,7 @@ void GraphTile::AssociateOneStopIds(const GraphId& graphid) {
   // Associate route and operator Ids
   auto deps = GetTransitDepartures();
   for (auto const& dep : deps) {
-    const auto* t = GetTransitRoute(dep.second->routeid());
+    const auto* t = GetTransitRoute(dep.second->routeindex());
     const auto& route_one_stop = GetName(t->one_stop_offset());
     auto stops = route_one_stops.find(route_one_stop);
     if (stops == route_one_stops.end()) {
@@ -449,12 +512,13 @@ std::string GraphTile::FileSuffix(const GraphId& graphid,
                                    : TileHierarchy::levels()[graphid.level()]);
 
   // figure out how many digits in tile-id
-  const auto max_id = level.tiles.ncolumns() * level.tiles.nrows() - 1;
+  const uint32_t max_id = static_cast<uint32_t>(level.tiles.ncolumns() * level.tiles.nrows() - 1);
+
   if (graphid.tileid() > max_id) {
     throw std::runtime_error("Could not compute FileSuffix for GraphId with invalid tile id:" +
                              std::to_string(graphid));
   }
-  size_t max_length = static_cast<size_t>(std::log10(std::max(1, max_id))) + 1;
+  size_t max_length = static_cast<size_t>(std::log10(std::max(1u, max_id))) + 1;
   const size_t remainder = max_length % 3;
   if (remainder) {
     max_length += 3 - remainder;
@@ -465,7 +529,7 @@ std::string GraphTile::FileSuffix(const GraphId& graphid,
   const size_t tile_id_strlen = max_length + max_length / 3;
   assert(tile_id_strlen % 4 == 0);
 
-  const char separator = is_file_path ? filesystem::path::preferred_separator : '/';
+  const char separator = is_file_path ? std::filesystem::path::preferred_separator : '/';
 
   std::string tile_id_str(tile_id_strlen, '0');
   size_t ind = tile_id_strlen - 1;
@@ -483,110 +547,6 @@ std::string GraphTile::FileSuffix(const GraphId& graphid,
   return std::to_string(graphid.level()) + tile_id_str + fname_suffix;
 }
 
-// Get the tile Id given the full path to the file.
-GraphId GraphTile::GetTileId(const std::string& fname) {
-  std::unordered_set<std::string::value_type> allowed{filesystem::path::preferred_separator,
-                                                      '0',
-                                                      '1',
-                                                      '2',
-                                                      '3',
-                                                      '4',
-                                                      '5',
-                                                      '6',
-                                                      '7',
-                                                      '8',
-                                                      '9'};
-  // we require slashes
-  auto pos = fname.find_last_of(filesystem::path::preferred_separator);
-  if (pos == fname.npos) {
-    throw std::runtime_error("Invalid tile path: " + fname);
-  }
-
-  // swallow numbers until you reach the end or a dot
-  for (; pos < fname.size(); ++pos) {
-    if (allowed.find(fname[pos]) == allowed.cend()) {
-      break;
-    }
-  }
-  allowed.erase(static_cast<std::string::value_type>(filesystem::path::preferred_separator));
-
-  // if you didnt reach the end and it wasnt a dot then this isnt valid
-  if (pos != fname.size() && fname[pos] != '.') {
-    throw std::runtime_error("Invalid tile path: " + fname);
-  }
-
-  // run backwards while you find an allowed char but stop if not 3 digits between slashes
-  std::vector<int> digits;
-  auto last = pos;
-  while (--pos < last) {
-    auto c = fname[pos];
-    // invalid char showed up
-    if (allowed.find(c) == allowed.cend()) {
-      throw std::runtime_error("Invalid tile path: " + fname);
-    }
-
-    // if its the last thing or the next one is a separator thats another digit
-    if (pos == 0 || fname[pos - 1] == filesystem::path::preferred_separator) {
-      // this is not 3 or 1 digits so its wrong
-      auto dist = last - pos;
-      if (dist != 3 && dist != 1) {
-        throw std::runtime_error("Invalid tile path: " + fname);
-      }
-      // we'll keep this
-      auto i = atoi(fname.substr(pos, dist).c_str());
-      digits.push_back(i);
-      // and we'll stop if it was the level (always a single digit see GraphId)
-      if (dist == 1) {
-        break;
-      }
-      // next
-      last = --pos;
-    }
-  }
-
-  // if the first thing isnt a valid level bail
-  if (digits.back() >= TileHierarchy::levels().size() &&
-      digits.back() != TileHierarchy::GetTransitLevel().level) {
-    throw std::runtime_error("Invalid tile path: " + fname);
-  }
-
-  // get the level info
-  uint32_t level = digits.back();
-  digits.pop_back();
-  const auto& tile_level = level == TileHierarchy::GetTransitLevel().level
-                               ? TileHierarchy::GetTransitLevel()
-                               : TileHierarchy::levels()[level];
-
-  // get the number of sub directories that we should have
-  auto max_id = tile_level.tiles.ncolumns() * tile_level.tiles.nrows() - 1;
-  size_t parts = static_cast<size_t>(std::log10(std::max(1, max_id))) + 1;
-  if (parts % 3 != 0) {
-    parts += 3 - (parts % 3);
-  }
-  parts /= 3;
-
-  // bail if its the wrong number of sub dirs
-  if (digits.size() != parts) {
-    throw std::runtime_error("Invalid tile path: " + fname);
-  }
-
-  // parse the id of the tile
-  int multiplier = 1;
-  uint32_t id = 0;
-  for (auto digit : digits) {
-    id += digit * multiplier;
-    multiplier *= 1000;
-  }
-
-  // if after parsing them the number is out of bounds bail
-  if (id > max_id) {
-    throw std::runtime_error("Invalid tile path: " + fname);
-  }
-
-  // you've passed the test enjoy your id
-  return {id, level, 0};
-}
-
 // Get the bounding box of this graph tile.
 AABB2<PointLL> GraphTile::BoundingBox() const {
   const auto& tiles = header_->graphid().level() == TileHierarchy::GetTransitLevel().level
@@ -595,18 +555,18 @@ AABB2<PointLL> GraphTile::BoundingBox() const {
   return tiles.TileBounds(header_->graphid().tileid());
 }
 
-iterable_t<const DirectedEdge> GraphTile::GetDirectedEdges(const NodeInfo* node) const {
+std::span<const DirectedEdge> GraphTile::GetDirectedEdges(const NodeInfo* node) const {
   if (node < nodes_ || node >= nodes_ + header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
         " GraphTile NodeInfo out of bounds: " + std::to_string(header_->graphid()));
   }
   const auto* edge = directededges_ + node->edge_index();
-  return iterable_t<const DirectedEdge>{edge, node->edge_count()};
+  return std::span<const DirectedEdge>{edge, node->edge_count()};
 }
 
-iterable_t<const DirectedEdge> GraphTile::GetDirectedEdges(const GraphId& node) const {
-  if (node.Tile_Base() != header_->graphid() || node.id() >= header_->nodecount()) {
+std::span<const DirectedEdge> GraphTile::GetDirectedEdges(const GraphId& node) const {
+  if (node.tile_base() != header_->graphid() || node.id() >= header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
         " GraphTile NodeInfo index out of bounds: " + std::to_string(node.tileid()) + "," +
@@ -617,7 +577,7 @@ iterable_t<const DirectedEdge> GraphTile::GetDirectedEdges(const GraphId& node) 
   return GetDirectedEdges(nodeinfo);
 }
 
-iterable_t<const DirectedEdge> GraphTile::GetDirectedEdges(const size_t idx) const {
+std::span<const DirectedEdge> GraphTile::GetDirectedEdges(const size_t idx) const {
   if (idx >= header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
@@ -627,21 +587,21 @@ iterable_t<const DirectedEdge> GraphTile::GetDirectedEdges(const size_t idx) con
   }
   const auto& nodeinfo = nodes_[idx];
   const auto* edge = directededge(nodeinfo.edge_index());
-  return iterable_t<const DirectedEdge>{edge, nodeinfo.edge_count()};
+  return std::span<const DirectedEdge>{edge, nodeinfo.edge_count()};
 }
 
-iterable_t<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const NodeInfo* node) const {
+std::span<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const NodeInfo* node) const {
   if (node < nodes_ || node >= nodes_ + header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
         " GraphTile NodeInfo out of bounds: " + std::to_string(header_->graphid()));
   }
   const auto* edge_ext = ext_directededges_ + node->edge_index();
-  return iterable_t<const DirectedEdgeExt>{edge_ext, node->edge_count()};
+  return std::span<const DirectedEdgeExt>{edge_ext, node->edge_count()};
 }
 
-iterable_t<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const GraphId& node) const {
-  if (node.Tile_Base() != header_->graphid() || node.id() >= header_->nodecount()) {
+std::span<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const GraphId& node) const {
+  if (node.tile_base() != header_->graphid() || node.id() >= header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
         " GraphTile NodeInfo index out of bounds: " + std::to_string(node.tileid()) + "," +
@@ -652,7 +612,7 @@ iterable_t<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const GraphId& 
   return GetDirectedEdgeExts(nodeinfo);
 }
 
-iterable_t<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const size_t idx) const {
+std::span<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const size_t idx) const {
   if (idx >= header_->nodecount()) {
     throw std::logic_error(
         std::string(__FILE__) + ":" + std::to_string(__LINE__) +
@@ -662,7 +622,7 @@ iterable_t<const DirectedEdgeExt> GraphTile::GetDirectedEdgeExts(const size_t id
   }
   const auto& nodeinfo = nodes_[idx];
   const auto* edge_ext = ext_directededge(nodeinfo.edge_index());
-  return iterable_t<const DirectedEdgeExt>{edge_ext, nodeinfo.edge_count()};
+  return std::span<const DirectedEdgeExt>{edge_ext, nodeinfo.edge_count()};
 }
 
 EdgeInfo GraphTile::edgeinfo(const DirectedEdge* edge) const {
@@ -671,30 +631,15 @@ EdgeInfo GraphTile::edgeinfo(const DirectedEdge* edge) const {
 
 // Get the complex restrictions in the forward or reverse order based on
 // the id and modes.
-std::vector<ComplexRestriction*>
-GraphTile::GetRestrictions(const bool forward, const GraphId id, const uint64_t modes) const {
-  size_t offset = 0;
-  std::vector<ComplexRestriction*> cr_vector;
+ComplexRestrictionView
+GraphTile::GetComplexRestrictions(const bool forward, const GraphId id, const uint64_t modes) const {
   if (forward) {
-    while (offset < complex_restriction_forward_size_) {
-      ComplexRestriction* cr =
-          reinterpret_cast<ComplexRestriction*>(complex_restriction_forward_ + offset);
-      if (cr->to_graphid() == id && (cr->modes() & modes)) {
-        cr_vector.push_back(cr);
-      }
-      offset += cr->SizeOf();
-    }
+    return ComplexRestrictionView(complex_restriction_forward_, complex_restriction_forward_size_, id,
+                                  modes, true);
   } else {
-    while (offset < complex_restriction_reverse_size_) {
-      ComplexRestriction* cr =
-          reinterpret_cast<ComplexRestriction*>(complex_restriction_reverse_ + offset);
-      if (cr->from_graphid() == id && (cr->modes() & modes)) {
-        cr_vector.push_back(cr);
-      }
-      offset += cr->SizeOf();
-    }
+    return ComplexRestrictionView(complex_restriction_reverse_, complex_restriction_reverse_size_, id,
+                                  modes, false);
   }
-  return cr_vector;
 }
 
 // Get the directed edges outbound from the specified node index.
@@ -752,10 +697,9 @@ std::string GraphTile::GetName(const uint32_t textlist_offset) const {
   }
 }
 
-// Convenience method to process the signs for an edge given the
-// directed edge or node index.
+// Return the signs for a given directed edge or node index.
 std::vector<SignInfo> GraphTile::GetSigns(const uint32_t idx, bool signs_on_node) const {
-  uint32_t count = header_->signcount();
+  const int32_t count = header_->signcount();
   std::vector<SignInfo> signs;
   if (count == 0) {
     return signs;
@@ -787,31 +731,51 @@ std::vector<SignInfo> GraphTile::GetSigns(const uint32_t idx, bool signs_on_node
   for (; found < count && signs_[found].index() == idx; ++found) {
     if (signs_[found].text_offset() < textlist_size_) {
 
-      std::string text = (textlist_ + signs_[found].text_offset());
+      const char* text = (textlist_ + signs_[found].text_offset());
+
+      bool isLinguistic = (signs_[found].type() == Sign::Type::kLinguistic);
+
+      bool is_node_sign_type = signs_[found].type() == Sign::Type::kJunctionName ||
+                               signs_[found].type() == Sign::Type::kTollName;
 
       // only add named signs when asking for signs at the node and
       // only add edge signs when asking for signs at the edges.
       // is_route_num_type indicates if this phonome is for a node or not; therefore,
-      // we only return a node phoneme when is_route_num_type and signs_on_node are both true and
-      // we only return an edge phoneme when is_route_num_type and signs_on_node are both false
-      if (((signs_[found].type() == Sign::Type::kJunctionName ||
-            (signs_[found].type() == Sign::Type::kPronunciation &&
-             signs_[found].is_route_num_type())) &&
+      // we only return a node phoneme when is_route_num_type and signs_on_node are both true
+      // and we only return an edge phoneme when is_route_num_type and signs_on_node are both
+      // false
+      if (((is_node_sign_type || (isLinguistic && signs_[found].is_route_num_type())) &&
            signs_on_node) ||
-          (((signs_[found].type() != Sign::Type::kJunctionName &&
-             signs_[found].type() != Sign::Type::kPronunciation) ||
-            (signs_[found].type() == Sign::Type::kPronunciation &&
-             !signs_[found].is_route_num_type())) &&
-           !signs_on_node))
+          (((!is_node_sign_type && !isLinguistic) ||
+            (isLinguistic && !signs_[found].is_route_num_type())) &&
+           !signs_on_node)) {
+        std::string sign_text = text;
+        if (isLinguistic) {
+          sign_text.clear();
+          while (*text != '\0') {
+            if (signs_[found].type() == Sign::Type::kLinguistic) {
+              const auto header = midgard::unaligned_read<linguistic_text_header_t>(text);
+              sign_text.append(
+                  std::string(reinterpret_cast<const char*>(&header), kLinguisticHeaderSize) +
+                  std::string((text + kLinguisticHeaderSize), header.length_));
+
+              text += header.length_ + kLinguisticHeaderSize;
+            }
+          }
+        }
+
         signs.emplace_back(signs_[found].type(), signs_[found].is_route_num_type(),
-                           signs_[found].tagged(), false, 0, 0, text);
+                           signs_[found].tagged(), false, 0, 0, sign_text);
+      }
     } else {
       throw std::runtime_error("GetSigns: offset exceeds size of text list");
     }
   }
+
   if (signs.size() == 0) {
     LOG_ERROR("No signs found for idx = " + std::to_string(idx));
   }
+
   return signs;
 }
 
@@ -819,14 +783,13 @@ std::vector<SignInfo> GraphTile::GetSigns(const uint32_t idx, bool signs_on_node
 // directed edge index.
 std::vector<SignInfo> GraphTile::GetSigns(
     const uint32_t idx,
-    std::unordered_map<uint32_t, std::pair<uint8_t, std::string>>& index_pronunciation_map,
+    std::unordered_map<uint8_t, std::tuple<uint8_t, uint8_t, std::string>>& index_linguistic_map,
     bool signs_on_node) const {
-  uint32_t count = header_->signcount();
+  const int32_t count = header_->signcount();
   std::vector<SignInfo> signs;
   if (count == 0) {
     return signs;
   }
-  index_pronunciation_map.reserve(count);
 
   // Signs are sorted by edge index.
   // Binary search to find a sign with matching edge index.
@@ -855,43 +818,62 @@ std::vector<SignInfo> GraphTile::GetSigns(
     if (signs_[found].text_offset() < textlist_size_) {
 
       const auto* text = (textlist_ + signs_[found].text_offset());
-      if (signs_[found].tagged() && signs_[found].type() == Sign::Type::kPronunciation) {
+      if (signs_[found].tagged() && signs_[found].type() == Sign::Type::kLinguistic) {
 
         // is_route_num_type indicates if this phonome is for a node or not
         if ((signs_[found].is_route_num_type() && signs_on_node) ||
             (!signs_[found].is_route_num_type() && !signs_on_node)) {
-          size_t pos = 0;
-          while (pos < strlen(text)) {
-            const auto header = midgard::unaligned_read<linguistic_text_header_t>(text + pos);
-            pos += 3;
+          while (*text != '\0') {
+            std::tuple<uint8_t, uint8_t, std::string> liguistic_attributes;
+            uint8_t name_index = 0;
+            if (signs_[found].type() == Sign::Type::kLinguistic) {
+              const auto header = midgard::unaligned_read<linguistic_text_header_t>(text);
 
-            auto iter = index_pronunciation_map.insert(
-                std::make_pair(header.name_index_,
-                               std::make_pair(header.phonetic_alphabet_,
-                                              std::string((text + pos), header.length_))));
+              std::get<kLinguisticMapTuplePhoneticAlphabetIndex>(liguistic_attributes) =
+                  header.phonetic_alphabet_;
+              std::get<kLinguisticMapTupleLanguageIndex>(liguistic_attributes) = header.language_;
+
+              std::get<kLinguisticMapTuplePronunciationIndex>(liguistic_attributes) =
+                  std::string(text + kLinguisticHeaderSize, header.length_);
+              text += header.length_ + kLinguisticHeaderSize;
+              name_index = header.name_index_;
+
+            } else
+              continue;
+
+            // Edge case.  Sometimes when phonemes exist but the language for that phoneme is not
+            // supported in that area, we toss the phoneme but add the default language for that
+            // name/destination key.  We only want to return the highest ranking phoneme type
+            // over the language.
+            auto iter = index_linguistic_map.insert(std::make_pair(name_index, liguistic_attributes));
             if (!iter.second) {
-              if (header.phonetic_alphabet_ > iter.first->second.first) {
-                iter.first->second = std::make_pair(header.phonetic_alphabet_,
-                                                    std::string((text + pos), header.length_));
+              if ((std::get<kLinguisticMapTuplePhoneticAlphabetIndex>(liguistic_attributes) >
+                   std::get<kLinguisticMapTuplePhoneticAlphabetIndex>(iter.first->second)) &&
+                  (std::get<kLinguisticMapTuplePhoneticAlphabetIndex>(liguistic_attributes) !=
+                   static_cast<uint8_t>(PronunciationAlphabet::kNone)) &&
+                  (std::get<kLinguisticMapTupleLanguageIndex>(liguistic_attributes) ==
+                   std::get<kLinguisticMapTupleLanguageIndex>(iter.first->second))) {
+                iter.first->second = liguistic_attributes;
               }
             }
-
-            pos += header.length_;
           }
         }
         continue;
       }
 
+      bool is_node_sign_type = signs_[found].type() == Sign::Type::kJunctionName ||
+                               signs_[found].type() == Sign::Type::kTollName;
+
       // only add named signs when asking for signs at the node and
       // only add edge signs when asking for signs at the edges.
-      if ((signs_[found].type() == Sign::Type::kJunctionName && signs_on_node) ||
-          (signs_[found].type() != Sign::Type::kJunctionName && !signs_on_node))
+      if ((is_node_sign_type && signs_on_node) || (!is_node_sign_type && !signs_on_node))
         signs.emplace_back(signs_[found].type(), signs_[found].is_route_num_type(),
                            signs_[found].tagged(), false, 0, 0, text);
     } else {
       throw std::runtime_error("GetSigns: offset exceeds size of text list");
     }
   }
+
   if (signs.size() == 0) {
     LOG_ERROR("No signs found for idx = " + std::to_string(idx));
   }
@@ -899,12 +881,11 @@ std::vector<SignInfo> GraphTile::GetSigns(
 }
 
 // Get lane connections ending on this edge.
-std::vector<LaneConnectivity> GraphTile::GetLaneConnectivity(const uint32_t idx) const {
+std::span<LaneConnectivity> GraphTile::GetLaneConnectivity(const uint32_t idx) const {
   uint32_t count = lane_connectivity_size_ / sizeof(LaneConnectivity);
-  std::vector<LaneConnectivity> lcs;
   if (count == 0) {
     LOG_ERROR("No lane connections found for idx = " + std::to_string(idx));
-    return lcs;
+    return {};
   }
 
   // Lane connections are sorted by edge index.
@@ -912,7 +893,7 @@ std::vector<LaneConnectivity> GraphTile::GetLaneConnectivity(const uint32_t idx)
   int32_t low = 0;
   int32_t high = count - 1;
   int32_t mid;
-  int32_t found = count;
+  auto found = count;
   while (low <= high) {
     mid = (low + high) / 2;
     const auto& lc = lane_connectivity_[mid];
@@ -929,14 +910,11 @@ std::vector<LaneConnectivity> GraphTile::GetLaneConnectivity(const uint32_t idx)
     }
   }
 
-  // Add Lane connections
-  for (; found < count && lane_connectivity_[found].to() == idx; ++found) {
-    lcs.emplace_back(lane_connectivity_[found]);
+  const auto start = found;
+  while (found < count && lane_connectivity_[found].to() == idx) {
+    ++found;
   }
-  if (lcs.size() == 0) {
-    LOG_ERROR("No lane connections found for idx = " + std::to_string(idx));
-  }
-  return lcs;
+  return std::span<LaneConnectivity>(lane_connectivity_ + start, lane_connectivity_ + found);
 }
 
 // Get the next departure given the directed line Id and the current
@@ -958,7 +936,7 @@ const TransitDeparture* GraphTile::GetNextDeparture(const uint32_t lineid,
   int32_t low = 0;
   int32_t high = count - 1;
   int32_t mid;
-  int32_t found = count;
+  auto found = count;
   while (low <= high) {
     mid = (low + high) / 2;
     const auto& dep = departures_[mid];
@@ -980,37 +958,32 @@ const TransitDeparture* GraphTile::GetNextDeparture(const uint32_t lineid,
   // Iterate through departures until one is found with valid date, dow or
   // calendar date, and does not have a calendar exception.
   for (; found < count && departures_[found].lineid() == lineid; ++found) {
-    // Make sure valid departure time
-    if (departures_[found].type() == kFixedSchedule) {
-      if (departures_[found].departure_time() >= current_time &&
-          GetTransitSchedule(departures_[found].schedule_index())
-              ->IsValid(day, dow, date_before_tile) &&
-          (!wheelchair || departures_[found].wheelchair_accessible()) &&
-          (!bicycle || departures_[found].bicycle_accessible())) {
-        return &departures_[found];
-      }
+    // Make sure it falls within the schedule and departure props are valid
+    const auto& d = departures_[found];
+    if ((wheelchair && !d.wheelchair_accessible()) || (bicycle && !d.bicycle_accessible()) ||
+        !GetTransitSchedule(d.schedule_index())->IsValid(day, dow, date_before_tile)) {
+      continue;
+    }
+
+    if (d.type() == kFixedSchedule) {
+      return &d;
     } else {
-      uint32_t departure_time = departures_[found].departure_time();
-      uint32_t end_time = departures_[found].end_time();
-      uint32_t frequency = departures_[found].frequency();
+      // TODO: this is for now only respecting frequencies.txt exact_times=true, e.g.
+      // auto departure_time = kFrequencySchedule ? d.departure_time() : d.departure_time() +
+      // (d.frequency() * 0.5f);
+      auto departure_time = d.departure_time();
+      const auto end_time = d.end_time();
+      const auto frequency = d.frequency();
+      // make sure the departure time is after the current_time for a frequency based trip
       while (departure_time < current_time && departure_time < end_time) {
         departure_time += frequency;
       }
 
-      if (departure_time >= current_time && departure_time < end_time &&
-          GetTransitSchedule(departures_[found].schedule_index())
-              ->IsValid(day, dow, date_before_tile) &&
-          (!wheelchair || departures_[found].wheelchair_accessible()) &&
-          (!bicycle || departures_[found].bicycle_accessible())) {
-
-        const auto& d = departures_[found];
-        const TransitDeparture* dep =
-            new TransitDeparture(d.lineid(), d.tripid(), d.routeid(), d.blockid(),
-                                 d.headsign_offset(), departure_time, d.end_time(), d.frequency(),
-                                 d.elapsed_time(), d.schedule_index(), d.wheelchair_accessible(),
-                                 d.bicycle_accessible());
-        return dep;
-      }
+      // make a new departure with a guess for departure time          ;
+      return new TransitDeparture(d.lineid(), d.tripid(), d.routeindex(), d.blockid(),
+                                  d.headsign_offset(), departure_time, d.end_time(), d.frequency(),
+                                  d.elapsed_time(), d.schedule_index(), d.wheelchair_accessible(),
+                                  d.bicycle_accessible());
     }
   }
 
@@ -1034,7 +1007,7 @@ const TransitDeparture* GraphTile::GetTransitDeparture(const uint32_t lineid,
   int32_t low = 0;
   int32_t high = count - 1;
   int32_t mid;
-  int32_t found = count;
+  auto found = count;
   while (low <= high) {
     mid = (low + high) / 2;
     const auto& dep = departures_[mid];
@@ -1071,7 +1044,7 @@ const TransitDeparture* GraphTile::GetTransitDeparture(const uint32_t lineid,
       if (departure_time >= current_time && departure_time < end_time) {
         const auto& d = departures_[found];
         const TransitDeparture* dep =
-            new TransitDeparture(d.lineid(), d.tripid(), d.routeid(), d.blockid(),
+            new TransitDeparture(d.lineid(), d.tripid(), d.routeindex(), d.blockid(),
                                  d.headsign_offset(), departure_time, d.end_time(), d.frequency(),
                                  d.elapsed_time(), d.schedule_index(), d.wheelchair_accessible(),
                                  d.bicycle_accessible());
@@ -1153,21 +1126,20 @@ const TransitSchedule* GraphTile::GetTransitSchedule(const uint32_t idx) const {
 }
 
 // Get the access restriction given its directed edge index
-std::vector<AccessRestriction> GraphTile::GetAccessRestrictions(const uint32_t idx,
-                                                                const uint32_t access) const {
+std::pair<std::span<const AccessRestriction>, size_t>
+GraphTile::GetAccessRestrictions(const uint32_t idx) const {
 
-  std::vector<AccessRestriction> restrictions;
   uint32_t count = header_->access_restriction_count();
   if (count == 0) {
-    return restrictions;
+    return {};
   }
 
   // Access restriction are sorted by edge Id.
-  // Binary search to find a access restriction with matching edge Id.
+  // Binary search to find an access restriction with matching edge Id.
   int32_t low = 0;
   int32_t high = count - 1;
   int32_t mid;
-  int32_t found = count;
+  auto found = count;
   while (low <= high) {
     mid = (low + high) / 2;
     const auto& res = access_restrictions_[mid];
@@ -1184,25 +1156,42 @@ std::vector<AccessRestriction> GraphTile::GetAccessRestrictions(const uint32_t i
     }
   }
 
-  // Add restrictions for only the access that we are interested in
-  for (; found < count && access_restrictions_[found].edgeindex() == idx; ++found) {
-    if (access_restrictions_[found].modes() & access) {
-      restrictions.emplace_back(access_restrictions_[found]);
-    }
+  const auto start = found;
+  while (found < count && access_restrictions_[found].edgeindex() == idx) {
+    ++found;
   }
-
-  return restrictions;
+  return {std::span<AccessRestriction>(access_restrictions_ + start, access_restrictions_ + found),
+          start};
 }
 
 // Get the array of graphids for this bin
-midgard::iterable_t<GraphId> GraphTile::GetBin(size_t column, size_t row) const {
+std::span<GraphId> GraphTile::GetBin(size_t column, size_t row) const {
   auto offsets = header_->bin_offset(column, row);
-  return iterable_t<GraphId>{edge_bins_ + offsets.first, edge_bins_ + offsets.second};
+  return std::span<GraphId>{edge_bins_ + offsets.first, edge_bins_ + offsets.second};
 }
 
-midgard::iterable_t<GraphId> GraphTile::GetBin(size_t index) const {
+std::span<GraphId> GraphTile::GetBin(size_t index) const {
   auto offsets = header_->bin_offset(index);
-  return iterable_t<GraphId>{edge_bins_ + offsets.first, edge_bins_ + offsets.second};
+  return std::span<GraphId>{edge_bins_ + offsets.first, edge_bins_ + offsets.second};
+}
+
+// Get the array of bounding circles for the given bin
+std::span<DiscretizedBoundingCircle> GraphTile::GetBoundingCircles(size_t column, size_t row) const {
+  if (!header_->has_bounding_circles()) {
+    return std::span<DiscretizedBoundingCircle>{bounding_circles_, bounding_circles_};
+  }
+  auto offsets = header_->bin_offset(column, row);
+  return std::span<DiscretizedBoundingCircle>{bounding_circles_ + offsets.first,
+                                              bounding_circles_ + offsets.second};
+}
+
+std::span<DiscretizedBoundingCircle> GraphTile::GetBoundingCircles(size_t index) const {
+  if (!header_->has_bounding_circles()) {
+    return std::span<DiscretizedBoundingCircle>{bounding_circles_, bounding_circles_};
+  }
+  auto offsets = header_->bin_offset(index);
+  return std::span<DiscretizedBoundingCircle>{bounding_circles_ + offsets.first,
+                                              bounding_circles_ + offsets.second};
 }
 
 // Get turn lanes for this edge.

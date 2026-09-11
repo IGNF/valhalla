@@ -1,19 +1,29 @@
-
 #ifndef VALHALLA_MIDGARD_TILES_H_
 #define VALHALLA_MIDGARD_TILES_H_
 
+#include <valhalla/midgard/aabb2.h>
+#include <valhalla/midgard/ellipse.h>
+
+#include <array>
 #include <cstdint>
 #include <functional>
-#include <list>
 #include <unordered_map>
 #include <unordered_set>
-
-#include <valhalla/midgard/aabb2.h>
-#include <valhalla/midgard/constants.h>
-#include <valhalla/midgard/ellipse.h>
+#include <utility>
 
 namespace valhalla {
 namespace midgard {
+
+enum class Neighbor : uint8_t {
+  kBottomLeft = 0,
+  kLeft = 1,
+  kTopLeft = 2,
+  kTop = 3,
+  kTopRight = 4,
+  kRight = 5,
+  kBottomRight = 6,
+  kBottom = 7,
+};
 
 /**
  * A class that provides a uniform (square) tiling system for a specified
@@ -123,7 +133,7 @@ public:
    * @param   y   y coordinate
    * @return  Returns the tile row. Returns -1 if outside the tile system bounds.
    */
-  int32_t Row(const float y) const {
+  int32_t Row(const typename coord_t::value_type y) const {
     // Return -1 if outside the tile system bounds
     if (y < tilebounds_.miny() || y > tilebounds_.maxy()) {
       return -1;
@@ -139,19 +149,18 @@ public:
    * @param   x   x coordinate
    * @return  Returns the tile column. Returns -1 if outside the tile system bounds.
    */
-  int32_t Col(const float x) const {
+  int32_t Col(const typename coord_t::value_type x) const {
     // Return -1 if outside the tile system bounds
     if (x < tilebounds_.minx() || x > tilebounds_.maxx()) {
       return -1;
     }
 
     // If equal to the max x return the largest column
-    if (x == tilebounds_.maxx()) {
+    const typename coord_t::value_type col = (x - tilebounds_.minx()) / tilesize_;
+    if (col >= ncolumns_) {
       return ncolumns_ - 1;
-    } else {
-      float col = (x - tilebounds_.minx()) / tilesize_;
-      return (col >= 0.0) ? static_cast<int32_t>(col) : static_cast<int32_t>(col - 1);
     }
+    return (col >= 0.0) ? static_cast<int32_t>(col) : static_cast<int32_t>(col - 1);
   }
 
   /**
@@ -169,7 +178,7 @@ public:
    * @param   y   y (or lat)
    * @param   x   x (or lng)
    * @return  Returns the tile Id. -1 (error is returned if the x,y is
-   *          outside the bounding box of the tiling sytem).
+   *          outside the bounding box of the tiling system).
    */
   int32_t TileId(const typename coord_t::first_type y, const typename coord_t::first_type x) const {
     // Return -1 if totally outside the extent.
@@ -230,8 +239,8 @@ public:
    * @return  The latitude, longitude extent of the specified tile.
    */
   AABB2<coord_t> TileBounds(const int32_t tileid) const {
-    Point2 base = Base(tileid);
-    return AABB2<coord_t>(base.x(), base.y(), base.x() + tilesize_, base.y() + tilesize_);
+    auto base = Base(tileid);
+    return {base.x(), base.y(), base.x() + tilesize_, base.y() + tilesize_};
   }
 
   /**
@@ -241,9 +250,9 @@ public:
    * @return  The latitude, longitude extent of the specified tile.
    */
   AABB2<coord_t> TileBounds(const int32_t col, const int32_t row) const {
-    float basex = tilebounds_.minx() + ((float)col * tilesize_);
-    float basey = tilebounds_.miny() + ((float)row * tilesize_);
-    return AABB2<coord_t>(basex, basey, basex + tilesize_, basey + tilesize_);
+    auto basex = tilebounds_.minx() + col * tilesize_;
+    auto basey = tilebounds_.miny() + row * tilesize_;
+    return {basex, basey, basex + tilesize_, basey + tilesize_};
   }
 
   /**
@@ -303,6 +312,73 @@ public:
     return tileid - ((tileid / ncolumns_) * ncolumns_) > 0 ? tileid - 1
            : wrapx_                                        ? tileid + ncolumns_ - 1
                                                            : tileid;
+  }
+
+  /**
+   * Identify a neighboring bin given a global (ie not tile local) bin.
+   *
+   * @param global_x the global column number of the input bin
+   * @param global_y the global row number of the input bin
+   * @param which    which neighbor to return
+   *
+   * @return the tile local bin given as a pair of tile id, tile local bin id.
+   */
+  std::pair<uint32_t, unsigned short>
+  GetNeighboringBin(int global_x, int global_y, Neighbor which) const {
+    // starting at lower left, moving clockwise
+
+    // clang-format off
+    static short dx[8] = {-1, -1, -1, 0, 1, 1,  1, 0};
+    static short dy[8] = {-1, 0,   1, 1, 1, 0, -1, -1};
+    // clang-format on
+
+    // new global
+    int nx = wrapx_ && ((global_x == ncolumns_ * nsubdivisions_) || global_x == 0)
+                 ? global_x
+                 : global_x + dx[static_cast<uint8_t>(which)];
+    int ny = global_y + dy[static_cast<uint8_t>(which)];
+
+    // convert back to tile/bin ids
+    int new_tileid = (nx / nsubdivisions_) + (ny / nsubdivisions_) * ncolumns_;
+    int new_binid = (nx % nsubdivisions_) + (ny % nsubdivisions_) * nsubdivisions_;
+    return std::make_pair(new_tileid, new_binid);
+  }
+
+  /**
+   * Collects the neighboring bins for a given bin (subdivision).
+   *
+   * @param tileid   the tile of the input bin
+   * @param binid    the tile local bin identifier of the input bin
+   * @param four_way whether to return 4 or 8 (including diagonal) neighbors
+   *
+   * @return a vector of neighboring bins given as a pair of tile id and bin id, in clockwise order,
+   * starting from lower left.
+   */
+  template <bool four_way, int neighbour_count = four_way ? 4 : 8>
+  std::array<std::pair<uint32_t, unsigned short>, neighbour_count>
+  GetNeighboringBins(uint32_t tileid, short binid) const {
+    std::array<std::pair<uint32_t, unsigned short>, neighbour_count> neighbors;
+
+    // tile coords
+    int tx = tileid % ncolumns_;
+    int ty = tileid / ncolumns_;
+    // bin coords within tile
+    int bx = binid % nsubdivisions_;
+    int by = binid / nsubdivisions_;
+    // global coords
+    int global_x = tx * nsubdivisions_ + bx;
+    int global_y = ty * nsubdivisions_ + by;
+
+    // skip diagonal neighbors in four way mode
+    constexpr auto start = four_way ? 1 : 0;
+    constexpr auto step = four_way ? 2 : 1;
+
+    int neighbor_idx = 0;
+    for (uint8_t i = start; i < 8; i += step) {
+      neighbors[neighbor_idx++] = GetNeighboringBin(global_x, global_y, static_cast<Neighbor>(i));
+    }
+
+    return neighbors;
   }
 
   /**
@@ -392,6 +468,11 @@ public:
    */
   std::function<std::tuple<int32_t, unsigned short, double>()>
   ClosestFirst(const coord_t& seed) const;
+
+  /**
+   * Returns the bounding box of a bin given its tile and bin ID within the tile
+   */
+  AABB2<coord_t> BinBBox(int32_t tile, unsigned short bin) const;
 
 protected:
   // Does the tile bounds wrap in the x direction (e.g. at longitude = 180)

@@ -1,23 +1,106 @@
-#include "thor/worker.h"
-
-#include "baldr/json.h"
-#include "baldr/rapidjson_utils.h"
-#include "midgard/constants.h"
+#include "baldr/graphconstants.h"
 #include "midgard/logging.h"
 #include "midgard/polyline2.h"
-#include "midgard/util.h"
+#include "thor/pathalgorithm.h"
+#include "thor/worker.h"
+#include "tyr/serializers.h"
+
+#include <ankerl/unordered_dense.h>
 
 using namespace rapidjson;
 using namespace valhalla::midgard;
+using namespace valhalla::tyr;
+
+namespace {
+
+using namespace valhalla;
+
+void writeExpansionProgress(Expansion* expansion,
+                            const baldr::GraphId& edgeid,
+                            const baldr::GraphId& prev_edgeid,
+                            const std::vector<midgard::PointLL>& shape,
+                            const std::unordered_set<Options::ExpansionProperties>& exp_props,
+                            const Expansion_EdgeStatus& status,
+                            const float& duration,
+                            const uint32_t& distance,
+                            const float& cost,
+                            const Expansion_ExpansionType expansion_type,
+                            const uint8_t flow_sources,
+                            const valhalla::TravelMode mode,
+                            const uint32_t expansion_index) {
+
+  auto* geom = expansion->add_geometries();
+  // make the geom
+  for (const auto& p : shape) {
+    geom->add_coords(round(p.lng() * 1e6));
+    geom->add_coords(round(p.lat() * 1e6));
+  }
+
+  // no properties asked for, don't collect any
+  if (!exp_props.size()) {
+    return;
+  }
+
+  // make the properties
+  if (exp_props.count(Options_ExpansionProperties_duration))
+    expansion->add_durations(static_cast<uint32_t>(duration));
+  if (exp_props.count(Options_ExpansionProperties_distance))
+    expansion->add_distances(static_cast<uint32_t>(distance));
+  if (exp_props.count(Options_ExpansionProperties_cost))
+    expansion->add_costs(static_cast<uint32_t>(cost));
+  if (exp_props.count(Options_ExpansionProperties_edge_status))
+    expansion->add_edge_status(status);
+  if (exp_props.count(Options_ExpansionProperties_edge_id))
+    expansion->add_edge_id(static_cast<uint64_t>(edgeid));
+  if (exp_props.count(Options_ExpansionProperties_pred_edge_id))
+    expansion->add_pred_edge_id(static_cast<uint64_t>(prev_edgeid));
+  if (exp_props.count(Options_ExpansionProperties_expansion_type))
+    expansion->add_expansion_type(expansion_type);
+  if (exp_props.count(Options_ExpansionProperties_flow_sources))
+    expansion->add_flow_sources(static_cast<uint32_t>(flow_sources));
+  if (exp_props.count(Options_ExpansionProperties_travel_mode))
+    expansion->add_travel_modes(mode);
+  if (exp_props.count(Options_ExpansionProperties_expansion_index))
+    expansion->add_expansion_index(expansion_index);
+}
+
+struct expansion_properties_t {
+  baldr::GraphId prev_edgeid;
+  // highest status the edge has seen
+  Expansion_EdgeStatus status;
+  float duration;
+  std::vector<midgard::PointLL> shape;
+  uint32_t distance;
+  float cost;
+  Expansion_ExpansionType expansion_type;
+  uint8_t flow_sources;
+  valhalla::TravelMode mode;
+  uint32_t expansion_index;
+
+  expansion_properties_t() = default;
+  expansion_properties_t(baldr::GraphId prev_edgeid,
+                         Expansion_EdgeStatus status,
+                         float duration,
+                         uint32_t distance,
+                         std::vector<midgard::PointLL>&& shape,
+                         float cost,
+                         Expansion_ExpansionType expansion_type,
+                         const uint8_t flow_sources,
+                         const valhalla::TravelMode mode,
+                         const uint32_t expansion_index)
+      : prev_edgeid(prev_edgeid), status(status), duration(duration), shape(std::move(shape)),
+        distance(distance), cost(cost), expansion_type(expansion_type), flow_sources(flow_sources),
+        mode(mode), expansion_index(expansion_index){};
+
+  // check if status is higher or same – as we will keep track of the latest one
+  static bool is_latest_status(Expansion_EdgeStatus current, Expansion_EdgeStatus candidate) {
+    return candidate <= current;
+  }
+};
+} // namespace
 
 namespace valhalla {
 namespace thor {
-
-// indices correspond to Options::ExpansionProperties enum
-const std::string kPropPaths[5] = {"/features/0/properties/costs", "/features/0/properties/durations",
-                                   "/features/0/properties/distances",
-                                   "/features/0/properties/statuses",
-                                   "/features/0/properties/edge_ids"};
 
 std::string thor_worker_t::expansion(Api& request) {
   // time this whole method and save that statistic
@@ -27,116 +110,83 @@ std::string thor_worker_t::expansion(Api& request) {
   auto options = request.options();
   auto exp_action = options.expansion_action();
   bool skip_opps = options.skip_opposites();
-  std::unordered_set<baldr::GraphId> opp_edges;
+  bool dedupe = options.dedupe();
   std::unordered_set<Options::ExpansionProperties> exp_props;
+  ankerl::unordered_dense::set<baldr::GraphId> opp_edges;
+  ankerl::unordered_dense::map<baldr::GraphId, expansion_properties_t> edge_state;
 
   // default generalization to ~ zoom level 15
   float gen_factor = options.has_generalize_case() ? options.generalize() : 10.f;
-
-  // default the expansion geojson so its easy to add to as we go
-  Document dom;
-  dom.SetObject();
-  // set algorithm to Dijkstra, will be overwritten by other algos
-  SetValueByPointer(dom, "/type", "FeatureCollection");
-  SetValueByPointer(dom, "/features/0/type", "Feature");
-  SetValueByPointer(dom, "/features/0/geometry/type", "MultiLineString");
-  SetValueByPointer(dom, "/features/0/geometry/coordinates", Value(kArrayType));
-  SetValueByPointer(dom, "/features/0/properties", Value(kObjectType));
   for (const auto& prop : options.expansion_properties()) {
-    rapidjson::Pointer(kPropPaths[prop]).Set(dom, Value(kArrayType));
     exp_props.insert(static_cast<Options_ExpansionProperties>(prop));
   }
 
+  auto* expansion = request.mutable_expansion();
   // a lambda that the path algorithm can call to add stuff to the dom
   // route and isochrone produce different GeoJSON properties
-  auto track_expansion = [&dom, &opp_edges, &gen_factor, &skip_opps,
-                          &exp_props](baldr::GraphReader& reader, baldr::GraphId edgeid,
-                                      const char* algorithm = nullptr, const char* status = nullptr,
-                                      const float duration = 0.f, const uint32_t distance = 0,
-                                      const float cost = 0.f) {
-    auto tile = reader.GetGraphTile(edgeid);
-    if (tile == nullptr) {
-      LOG_ERROR("thor_worker_t::expansion error, tile no longer available" +
-                std::to_string(edgeid.Tile_Base()));
-      return;
-    }
-    const auto* edge = tile->directededge(edgeid);
-    // unfortunately we have to call this before checking if we can skip
-    // else the tile could change underneath us when we get the opposing
-    auto shape = tile->edgeinfo(edge).shape();
-    auto names = tile->edgeinfo(edge).GetNames();
-    auto is_forward = edge->forward();
+  std::string algo = "";
+  auto track_expansion =
+      [&](baldr::GraphReader& reader, baldr::GraphId edgeid, baldr::GraphId prev_edgeid,
+          const char* algorithm = nullptr,
+          const Expansion_EdgeStatus status = Expansion_EdgeStatus_reached,
+          const float duration = 0.f, const uint32_t distance = 0, const float cost = 0.f,
+          const Expansion_ExpansionType expansion_type = Expansion_ExpansionType_forward,
+          const uint8_t flow_sources = baldr::kNoFlowMask, const TravelMode mode = TravelMode_MAX,
+          // only matrix algorithms pass a source/target index, everything else expands a single tree
+          const uint32_t expansion_index = 0) {
+        algo = algorithm;
 
-    // if requested, skip this edge in case its opposite edge has been added
-    // before (i.e. lower cost) else add this edge's id to the lookup container
-    if (skip_opps) {
-      auto opp_edgeid = reader.GetOpposingEdgeId(edgeid, tile);
-      if (opp_edgeid && opp_edges.count(opp_edgeid))
-        return;
-      opp_edges.insert(edgeid);
-    }
+        auto tile = reader.GetGraphTile(edgeid);
+        if (tile == nullptr) {
+          LOG_ERROR("thor_worker_t::expansion error, tile no longer available" +
+                    std::to_string(edgeid.tile_base()));
+          return;
+        }
 
-    if (!edge->forward())
-      std::reverse(shape.begin(), shape.end());
-    Polyline2<PointLL>::Generalize(shape, gen_factor, {}, false);
+        // if requested, skip this edge in case its opposite edge has been added
+        // before (i.e. lower cost) else add this edge's id to the lookup container
+        if (skip_opps) {
+          auto opp_tile = tile;
+          auto opp_edgeid = reader.GetOpposingEdgeId(edgeid, opp_tile);
+          if (opp_edgeid && opp_edges.count(opp_edgeid))
+            return;
+          opp_edges.insert(edgeid);
+        }
 
-    // make the geom
-    auto& a = dom.GetAllocator();
-    auto* coords = GetValueByPointer(dom, "/features/0/geometry/coordinates");
-    coords->GetArray().PushBack(Value(kArrayType), a);
-    auto& linestring = (*coords)[coords->Size() - 1];
-    for (const auto& p : shape) {
-      linestring.GetArray().PushBack(Value(kArrayType), a);
-      auto point = linestring[linestring.Size() - 1].GetArray();
-      point.PushBack(p.first, a);
-      point.PushBack(p.second, a);
-    }
+        const auto* edge = tile->directededge(edgeid);
+        auto shape = tile->edgeinfo(edge).shape();
 
-    // no properties asked for, don't collect any
-    if (!exp_props.size()) {
-      return;
-    }
-
-    // make the properties
-    SetValueByPointer(dom, "/properties/algorithm", algorithm);
-    if (exp_props.count(Options_ExpansionProperties_durations)) {
-      Pointer(kPropPaths[Options_ExpansionProperties_durations])
-          .Get(dom)
-          ->GetArray()
-          .PushBack(Value{}.SetUint(static_cast<uint32_t>(duration)), a);
-    }
-    if (exp_props.count(Options_ExpansionProperties_distances)) {
-      Pointer(kPropPaths[Options_ExpansionProperties_distances])
-          .Get(dom)
-          ->GetArray()
-          .PushBack(Value{}.SetUint(distance), a);
-    }
-    if (exp_props.count(Options_ExpansionProperties_costs)) {
-      Pointer(kPropPaths[Options_ExpansionProperties_costs])
-          .Get(dom)
-          ->GetArray()
-          .PushBack(Value{}.SetUint(static_cast<uint32_t>(cost)), a);
-    }
-    if (exp_props.count(Options_ExpansionProperties_statuses))
-      Pointer(kPropPaths[Options_ExpansionProperties_statuses])
-          .Get(dom)
-          ->GetArray()
-          .PushBack(Value{}.SetString(status, a), a);
-    if (exp_props.count(Options_ExpansionProperties_edge_ids))
-      Pointer(kPropPaths[Options_ExpansionProperties_edge_ids])
-          .Get(dom)
-          ->GetArray()
-          .PushBack(Value{}.SetUint64(static_cast<uint64_t>(edgeid)), a);
-  };
+        if (!edge->forward())
+          std::reverse(shape.begin(), shape.end());
+        Polyline2<PointLL>::Generalize(shape, gen_factor, {}, false);
+        if (dedupe) {
+          if (auto it = edge_state.find(edgeid); it != edge_state.end()) {
+            // Keep only properties of last/highest status of edge
+            if (!expansion_properties_t::is_latest_status(it->second.status, status)) {
+              return;
+            }
+          }
+          edge_state[edgeid] =
+              expansion_properties_t(prev_edgeid, status, duration, distance, std::move(shape), cost,
+                                     expansion_type, flow_sources, mode, expansion_index);
+        } else {
+          writeExpansionProgress(expansion, edgeid, prev_edgeid, shape, exp_props, status, duration,
+                                 distance, cost, expansion_type, flow_sources, mode, expansion_index);
+        }
+      };
 
   // tell all the algorithms how to track expansion
   for (auto* alg : std::vector<PathAlgorithm*>{
-           &multi_modal_astar,
+           &multi_modal_transit,
            &timedep_forward,
            &timedep_reverse,
            &bidir_astar,
-           &bss_astar,
+           &multimodal_astar,
        }) {
+    alg->set_track_expansion(track_expansion);
+  }
+  for (auto* alg : std::vector<MatrixAlgorithm*>{&costmatrix_, &time_distance_matrix_,
+                                                 &time_distance_bss_matrix_}) {
     alg->set_track_expansion(track_expansion);
   }
   isochrone_gen.SetInnerExpansionCallback(track_expansion);
@@ -147,21 +197,34 @@ std::string thor_worker_t::expansion(Api& request) {
       route(request);
     } else if (exp_action == Options::isochrone) {
       isochrones(request);
+    } else if (exp_action == Options::sources_to_targets) {
+      matrix(request);
     }
   } catch (...) {
     // we swallow exceptions because we actually want to see what the heck the expansion did
     // anyway
   }
 
+  // assemble the properties from latest/highest stages it went through
+  if (dedupe) {
+    for (const auto& e : edge_state) {
+      writeExpansionProgress(expansion, e.first, e.second.prev_edgeid, e.second.shape, exp_props,
+                             e.second.status, e.second.duration, e.second.distance, e.second.cost,
+                             e.second.expansion_type, e.second.flow_sources, e.second.mode,
+                             e.second.expansion_index);
+    }
+  }
+
   // tell all the algorithms to stop tracking the expansion
-  for (auto* alg : std::vector<PathAlgorithm*>{&multi_modal_astar, &timedep_forward, &timedep_reverse,
-                                               &bidir_astar, &bss_astar}) {
+  for (auto* alg : std::vector<PathAlgorithm*>{&multi_modal_transit, &timedep_forward,
+                                               &timedep_reverse, &bidir_astar, &multimodal_astar}) {
     alg->set_track_expansion(nullptr);
   }
+  costmatrix_.set_track_expansion(nullptr);
   isochrone_gen.SetInnerExpansionCallback(nullptr);
 
   // serialize it
-  return to_string(dom, 5);
+  return tyr::serializeExpansion(request, algo);
 }
 
 } // namespace thor

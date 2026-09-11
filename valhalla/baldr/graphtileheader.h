@@ -1,14 +1,16 @@
 #ifndef VALHALLA_BALDR_GRAPHTILEHEADER_H_
 #define VALHALLA_BALDR_GRAPHTILEHEADER_H_
 
-#include <cstdint>
-#include <cstdlib>
-#include <string>
-
+#include <valhalla/baldr/graphconstants.h>
 #include <valhalla/baldr/graphid.h>
 #include <valhalla/baldr/tilehierarchy.h>
 #include <valhalla/midgard/logging.h>
 #include <valhalla/midgard/pointll.h>
+
+#include <array>
+#include <cstdint>
+#include <cstdlib>
+#include <string>
 
 namespace valhalla {
 namespace baldr {
@@ -17,7 +19,7 @@ namespace baldr {
 // something to the tile simply subtract one from this number and add it
 // just before the empty_slots_ array below. NOTE that it can ONLY be an
 // offset in bytes and NOT a bitfield or union or anything of that sort
-constexpr size_t kEmptySlots = 11;
+constexpr size_t kEmptySlots = 10;
 
 // Maximum size of the version string (stored as a fixed size
 // character array so the GraphTileHeader size remains fixed).
@@ -164,13 +166,7 @@ public:
    * @return Returns the base lat,lon of the tile (degrees).
    */
   midgard::PointLL base_ll() const {
-    GraphId id(graphid_);
-
-    if (id.level() == TileHierarchy::GetTransitLevel().level) {
-      return TileHierarchy::GetTransitLevel().tiles.Base(id.tileid());
-    }
-    return TileHierarchy::levels()[id.level()].tiles.Base(id.tileid());
-    // return midgard::PointLL(base_ll_.first, base_ll_.second);
+    return {base_ll_[0], base_ll_[1]};
   }
 
   /**
@@ -178,8 +174,8 @@ public:
    * @param ll  Base lat,lon of the tile.
    */
   void set_base_ll(const midgard::PointLL& ll) {
-    base_ll_.first = ll.lng();
-    base_ll_.second = ll.lat();
+    base_ll_[0] = ll.lng();
+    base_ll_[1] = ll.lat();
   }
 
   /**
@@ -187,7 +183,7 @@ public:
    * @return  Returns the version of this tile.
    */
   std::string version() const {
-    return version_;
+    return version_.data();
   }
 
   /**
@@ -251,6 +247,17 @@ public:
       LOG_ERROR("Tile exceeded maximum directededge count: " + std::to_string(count));
     }
     directededgecount_ = count;
+  }
+
+  /**
+   * Checks for the presence of bounding circles.
+   *
+   * @return false if the bounding circle offset is
+   * either 0 or equal to the overall tile size (during early Valhalla 3.x versions, unused offset
+   * slots were set to tile_size), else true.
+   */
+  bool has_bounding_circles() const {
+    return boundingcircles_offset_ != 0 && boundingcircles_offset_ != tile_size_;
   }
 
   /**
@@ -589,7 +596,50 @@ public:
     tile_size_ = offset;
   }
 
+  /**
+   * Get the offset to the start of the bounding circles
+   * @return the byte offset to the start of the bounding circles
+   */
+  uint32_t bounding_circle_offset() const {
+    return boundingcircles_offset_ == tile_size_ ? 0 : boundingcircles_offset_;
+  }
+
+  /**
+   * Sets the offset to the start of the bounding circles
+   * @param offset the offset in bytes to the beginning of the bounding circles
+   */
+  void set_bounding_circle_offset(uint32_t offset) {
+    boundingcircles_offset_ = offset;
+  }
+
+  /**
+   * Get the per-tile data hash, the low bits of checksum_. Unique per tile but reproducible across
+   * builds of the same data.
+   * @return the 48-bit hash of the tile's data
+   */
+  uint64_t tile_checksum() const {
+    return checksum_ & ((uint64_t(1) << kTileHashBits) - 1);
+  }
+
+  /**
+   * Sets the raw checksum_ field:
+   * build id packed in the high bits, per-tile data hash in the low bits.
+   * @param checksum the 64bit value for the tile's checksum_
+   */
+  void set_raw_checksum(uint64_t checksum) {
+    checksum_ = checksum;
+  }
+
+  /**
+   * Returns the tileset build id packed into the high bits of checksum_.
+   * It stays the same across every tile of a build.
+   */
+  uint16_t build_id() const {
+    return static_cast<uint16_t>(checksum_ >> kTileHashBits);
+  }
+
 protected:
+  // TODO when c++20 bitfields can be initialized here
   // GraphId (tileid and level) of this tile. Data quality metrics.
   uint64_t graphid_ : 46;
   uint64_t density_ : 4;
@@ -601,13 +651,13 @@ protected:
 
   // TODO: in v4, don't store this its superfluous information, the graphid has all we need
   // Base lon, lat of the tile
-  std::pair<float, float> base_ll_;
+  std::array<float, 2> base_ll_ = {0.f, 0.f};
 
   // baldr version.
-  char version_[kMaxVersionSize];
+  std::array<char, kMaxVersionSize> version_ = {};
 
   // Dataset Id
-  uint64_t dataset_id_;
+  uint64_t dataset_id_ = 0;
 
   // Record counts (for fixed size records). Node and directed edge have a max of
   // kMaxGraphId which is 21 bits.
@@ -654,7 +704,7 @@ protected:
   // On x86 based systems the compiler will only pad to 32bits
   // This made tiles incompatibilte between x64 and x86 platforms
   // To fix it we insert spare in the right places so that its the same as what
-  // the compiler automatically does on an 64bit system but makes 32bit sysems
+  // the compiler automatically does on an 64bit system but makes 32bit systems
   // see the layout of the structure that way as well. This way both platforms agree
   // that the x64 implementation, which is what we generally use to build tiles,
   // is the correct implementation
@@ -663,37 +713,50 @@ protected:
   // the GraphTileHeader structure and order of data within the structure does not change
   // this should be backwards compatible. Make sure use of bits from spareword* does not
   // exceed 128 bits.
-  uint64_t spareword0_;
-  uint64_t spareword1_;
+  uint64_t spareword0_ = 0;
+
+  // for road tiles: hashed md5 of the OSM PBFs
+  // for transit tiles: so far the same
+  uint64_t checksum_ = 0; // formerly spareword1_
 
   // Offsets to beginning of data (for variable size records)
-  uint32_t complex_restriction_forward_offset_; // Offset to complex restriction list
-  uint32_t complex_restriction_reverse_offset_; // Offset to complex restriction list
-  uint32_t edgeinfo_offset_;                    // Offset to edge info
-  uint32_t textlist_offset_;                    // Offset to text list
+  uint32_t complex_restriction_forward_offset_ = 0; // Offset to complex restriction list
+  uint32_t complex_restriction_reverse_offset_ = 0; // Offset to complex restriction list
+  uint32_t edgeinfo_offset_ = 0;                    // Offset to edge info
+  uint32_t textlist_offset_ = 0;                    // Offset to text list
 
   // Date the tile was created. Days since pivot date.
-  uint32_t date_created_;
+  uint32_t date_created_ = 0;
 
   // Offsets for each bin of the 5x5 grid (for search/lookup)
-  uint32_t bin_offsets_[kBinCount];
+  std::array<uint32_t, kBinCount> bin_offsets_ = {};
 
   // Offset to beginning of the lane connectivity data
-  uint32_t lane_connectivity_offset_;
+  uint32_t lane_connectivity_offset_ = 0;
 
   // Offset to the beginning of the predicted speed data
-  uint32_t predictedspeeds_offset_;
+  uint32_t predictedspeeds_offset_ = 0;
 
   // GraphTile data size in bytes
-  uint32_t tile_size_;
+  uint32_t tile_size_ = 0;
+
+  // Offset to the start of the bounding circles; 0 means no bounding circles are present
+  uint32_t boundingcircles_offset_ = 0;
 
   // Marks the end of this version of the tile with the rest of the slots
   // being available for growth. If you want to use one of the empty slots,
   // simply add a uint32_t some_offset_; just above empty_slots_ and decrease
   // kEmptySlots by 1. Note that you can ONLY add an offset here and NOT a
   // bitfield or union or anything like that
-  uint32_t empty_slots_[kEmptySlots];
+  std::array<uint32_t, kEmptySlots> empty_slots_ = {};
 };
+
+static_assert(sizeof(GraphTileHeader) == 272, "Bad sizeof(GraphTileHeader)");
+// make sure it stays POD-like so we can safely copy its bytes around
+static_assert(std::is_trivially_copyable_v<GraphTileHeader>,
+              "GraphTileHeader is not trivially copyable");
+static_assert(std::is_standard_layout_v<GraphTileHeader>,
+              "GraphTileHeader has non-standard layout, e.g. virtual functions");
 
 } // namespace baldr
 } // namespace valhalla

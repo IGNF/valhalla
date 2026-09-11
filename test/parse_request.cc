@@ -1,13 +1,15 @@
-#include <iostream>
-#include <string>
-#include <vector>
-
+#include "baldr/rapidjson_utils.h"
 #include "proto/options.pb.h"
 #include "proto_conversions.h"
 #include "sif/costconstants.h"
+#include "sif/costfactory.h"
+#include "sif/hierarchylimits.h"
 #include "worker.h"
 
-#include "test.h"
+#include <gtest/gtest.h>
+
+#include <string>
+#include <vector>
 
 using namespace valhalla;
 
@@ -116,7 +118,7 @@ constexpr float kDefaultBicycle_UseHills = 0.25f;
 constexpr float kDefaultBicycle_AvoidBadSurfaces = 0.25f; // Factor between 0 and 1
 constexpr float kDefaultBicycle_UseLivingStreets = 0.5f;  // Factor between 0 and 1
 constexpr float kDefaultBicycle_ServicePenalty = 15.0f;   // Seconds
-const std::string kDefaultBicycle_BicycleType = "Hybrid"; // Bicycle type
+const std::string kDefaultBicycle_BicycleType = "hybrid"; // Bicycle type
 constexpr float kDefaultBicycle_CyclingSpeed[] = {
     25.0f, // Road bicycle: ~15.5 MPH
     20.0f, // Cross bicycle: ~13 MPH
@@ -135,7 +137,7 @@ constexpr float kDefaultTruck_TollBoothCost = 15.0f;           // Seconds
 constexpr float kDefaultTruck_TollBoothPenalty = 0.0f;         // Seconds
 constexpr float kDefaultTruck_CountryCrossingCost = 600.0f;    // Seconds
 constexpr float kDefaultTruck_CountryCrossingPenalty = 0.0f;   // Seconds
-constexpr float kDefaultTruck_LowClassPenalty = 30.0f;         // Seconds
+constexpr float kDefaultTruck_LowClassPenalty = 15.0f;         // Seconds
 constexpr float kDefaultTruck_TruckWeight = 21.77f;            // Metric Tons (48,000 lbs)
 constexpr float kDefaultTruck_TruckAxleLoad = 9.07f;           // Metric Tons (20,000 lbs)
 constexpr uint32_t kDefaultTruck_TruckAxles = 5;               // Count
@@ -158,14 +160,6 @@ constexpr float kDefaultTransit_UseTransfers = 0.3f;
 ///////////////////////////////////////////////////////////////////////////////
 // validate by type methods
 void validate(const std::string& key, const bool expected_value, const bool pbf_value) {
-  EXPECT_EQ(pbf_value, expected_value) << "incorrect " << key;
-}
-
-void validate(const std::string& key,
-              const bool expected_value,
-              const bool has_pbf_value,
-              const bool pbf_value) {
-  ASSERT_TRUE(has_pbf_value) << "bool value not found in pbf for key=" + key;
   EXPECT_EQ(pbf_value, expected_value) << "incorrect " << key;
 }
 
@@ -196,15 +190,6 @@ void validate(const std::string& key,
 void validate(const std::string& key,
               const std::string& expected_value,
               const std::string& pbf_value) {
-  EXPECT_EQ(pbf_value, expected_value) << "incorrect " << key;
-}
-
-void validate(const std::string& key,
-              const std::string& expected_value,
-              const bool has_pbf_value,
-              const std::string& pbf_value) {
-
-  ASSERT_TRUE(has_pbf_value) << "string value not found in pbf for key=" + key;
   EXPECT_EQ(pbf_value, expected_value) << "incorrect " << key;
 }
 
@@ -253,8 +238,8 @@ std::string get_request_str(const std::string& grandparent_key,
                             const std::string& parent_key,
                             const std::string& key,
                             const bool specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + key + R"(":)" +
-         std::string(specified_value ? "true" : "false") + R"(}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + key + R"(":)" + std::string(specified_value ? "true" : "false") + R"(}}})";
 }
 
 std::string get_request_str(const std::string& key, const float expected_value) {
@@ -270,8 +255,8 @@ std::string get_request_str(const std::string& grandparent_key,
                             const std::string& parent_key,
                             const std::string& key,
                             const float specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + key + R"(":)" +
-         std::to_string(specified_value) + R"(}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + key + R"(":)" + std::to_string(specified_value) + R"(}}})";
 }
 
 std::string get_request_str(const std::string& grandparent_key,
@@ -280,16 +265,17 @@ std::string get_request_str(const std::string& grandparent_key,
                             const std::string& sibling_value,
                             const std::string& key,
                             const float specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + sibling_key + R"(":")" +
-         sibling_value + R"(",")" + key + R"(":)" + std::to_string(specified_value) + R"(}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + sibling_key + R"(":")" + sibling_value + R"(",")" + key + R"(":)" +
+         std::to_string(specified_value) + R"(}}})";
 }
 
 std::string get_request_str(const std::string& grandparent_key,
                             const std::string& parent_key,
                             const std::string& key,
                             const uint32_t specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + key + R"(":)" +
-         std::to_string(specified_value) + R"(}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + key + R"(":)" + std::to_string(specified_value) + R"(}}})";
 }
 
 std::string get_request_str(const std::string& grandparent_key,
@@ -298,16 +284,17 @@ std::string get_request_str(const std::string& grandparent_key,
                             const std::string& sibling_value,
                             const std::string& key,
                             const uint32_t specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + sibling_key + R"(":")" +
-         sibling_value + R"(",")" + key + R"(":)" + std::to_string(specified_value) + R"(}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + sibling_key + R"(":")" + sibling_value + R"(",")" + key + R"(":)" +
+         std::to_string(specified_value) + R"(}}})";
 }
 
 std::string get_request_str(const std::string& grandparent_key,
                             const std::string& parent_key,
                             const std::string& key,
                             const std::string& specified_value) {
-  return R"({")" + grandparent_key + R"(":{")" + parent_key + R"(":{")" + key + R"(":")" +
-         specified_value + R"("}}})";
+  return R"({"costing":")" + parent_key + R"(",")" + grandparent_key + R"(":{")" + parent_key +
+         R"(":{")" + key + R"(":")" + specified_value + R"("}}})";
 }
 
 std::string get_request_str(const std::string& key, const uint32_t expected_value) {
@@ -358,8 +345,9 @@ std::string get_filter_request_str(const std::string& costing,
                                    const std::string& filter_type,
                                    const valhalla::FilterAction filter_action,
                                    const std::vector<std::string>& filter_ids) {
-  return R"({"costing_options":{")" + costing + R"(":{"filters":{")" + filter_type + R"(":{)" +
-         get_kv_str("action", filter_action) + R"(,)" + get_kv_str("ids", filter_ids) + R"(}}}}})";
+  return R"({"costing":")" + costing + R"(",)" + R"("costing_options":{")" + costing +
+         R"(":{"filters":{")" + filter_type + R"(":{)" + get_kv_str("action", filter_action) +
+         R"(,)" + get_kv_str("ids", filter_ids) + R"(}}}}})";
 }
 
 Api get_request(const std::string& request_str, const Options::Action action) {
@@ -381,7 +369,7 @@ void test_polygons_parsing(const bool expected_value,
                            const Options::Action action = Options::isochrone) {
   const std::string key = "polygons";
   Api request = get_request(get_request_str(key, expected_value), action);
-  validate(key, expected_value, request.options().has_polygons_case(), request.options().polygons());
+  validate(key, expected_value, request.options().polygons());
 }
 
 void test_denoise_parsing(const float expected_value,
@@ -403,8 +391,7 @@ void test_show_locations_parsing(const bool expected_value,
                                  const Options::Action action = Options::isochrone) {
   const std::string key = "show_locations";
   Api request = get_request(get_request_str(key, expected_value), action);
-  validate(key, expected_value, request.options().has_show_locations_case(),
-           request.options().show_locations());
+  validate(key, expected_value, request.options().show_locations());
 }
 
 void test_shape_match_parsing(const ShapeMatch expected_value, const Options::Action action) {
@@ -1637,6 +1624,43 @@ void test_closure_factor_parsing(const Costing::Type costing_type,
   validate(key, expected_value, options.closure_factor());
 }
 
+// utility functions for testing disable_hierarchy_pruning
+// Create costing options (reference: /test/astar.cc)
+void create_costing_options(Api& request, Costing::Type type) {
+  const rapidjson::Document doc;
+  request.mutable_options()->set_costing_type(type);
+  sif::ParseCosting(doc, "/costing_options", *request.mutable_options(),
+                    *request.mutable_info()->mutable_warnings());
+}
+
+// Set disable_hierarchy_pruning to true in costing options
+void set_disable_hierarchy_pruning(Options& options, Costing::Type type) {
+  Costing* costing = &(*options.mutable_costings())[type];
+  auto* co = costing->mutable_options();
+  co->set_disable_hierarchy_pruning(true);
+}
+
+// test disable_hierarchy_pruning
+class HierarchyTest : public ::testing::TestWithParam<Costing::Type> {
+protected:
+  // Test the hierarchy limits are actually disabled when disable_hierarchy_pruning = true
+  void doTest(Costing::Type costing_type) {
+    // Set costing options
+    Api request;
+    set_disable_hierarchy_pruning(*request.mutable_options(), costing_type);
+    create_costing_options(request, costing_type);
+    valhalla::sif::TravelMode travel_mode;
+    const auto mode_costing =
+        valhalla::sif::CostFactory().CreateModeCosting(request.options(), travel_mode);
+
+    // Check hierarchy limits
+    const auto& hierarchy_limits = mode_costing[int(travel_mode)]->GetHierarchyLimits();
+    for (auto& hierarchy : hierarchy_limits) {
+      EXPECT_EQ(hierarchy.max_up_transitions(), kUnlimitedTransitions);
+    }
+  }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 // test by key methods
 TEST(ParseRequest, test_polygons) {
@@ -1743,23 +1767,22 @@ TEST(ParseRequest, test_default_base_cost_options) {
 
 TEST(ParseRequest, test_transport_type) {
   std::string transport_type_key = "type";
-  std::string transport_type_value = "car";
-  for (auto costing : get_base_auto_costing_list()) {
-    test_transport_type_parsing(costing, transport_type_key, transport_type_value,
-                                transport_type_value);
-  }
 
   Costing::Type costing = Costing::pedestrian;
-  for (const auto& transport_type_value : {"foot", "wheelchair"}) {
-    test_transport_type_parsing(costing, transport_type_key, transport_type_value,
-                                transport_type_value);
+  auto lowered = std::vector<std::string>{"foot", "wheelchair", "blind"};
+  auto expected = lowered.begin();
+  for (const auto& transport_type_value : {"Foot", "Wheelchair", "Blind"}) {
+    test_transport_type_parsing(costing, transport_type_key, transport_type_value, *expected);
+    ++expected;
   }
 
   costing = Costing::bicycle;
   transport_type_key = "bicycle_type";
-  for (const auto& transport_type_value : {"Road", "Cross", "Hybrid", "Mountain"}) {
-    test_transport_type_parsing(costing, transport_type_key, transport_type_value,
-                                transport_type_value);
+  lowered = std::vector<std::string>{"road", "cross", "hybrid", "mountain"};
+  expected = lowered.begin();
+  for (const auto& transport_type_value : {"Road", "Cross", "hybrid", "Mountain"}) {
+    test_transport_type_parsing(costing, transport_type_key, transport_type_value, *expected);
+    ++expected;
   }
 }
 
@@ -2622,7 +2645,7 @@ TEST(ParseRequest, test_avoid_bad_surfaces) {
 TEST(ParseRequest, test_cycling_speed) {
   Costing::Type costing = Costing::bicycle;
 
-  std::string transport_type = "Road";
+  std::string transport_type = "road";
   float default_value =
       kDefaultBicycle_CyclingSpeed[static_cast<uint32_t>(valhalla::sif::BicycleType::kRoad)];
   test_cycling_speed_parsing(costing, transport_type, default_value, default_value);
@@ -2631,7 +2654,7 @@ TEST(ParseRequest, test_cycling_speed) {
   test_cycling_speed_parsing(costing, transport_type, 2.f, default_value);
   test_cycling_speed_parsing(costing, transport_type, 70.f, default_value);
 
-  transport_type = "Cross";
+  transport_type = "cross";
   default_value =
       kDefaultBicycle_CyclingSpeed[static_cast<uint32_t>(valhalla::sif::BicycleType::kCross)];
   test_cycling_speed_parsing(costing, transport_type, default_value, default_value);
@@ -2640,7 +2663,7 @@ TEST(ParseRequest, test_cycling_speed) {
   test_cycling_speed_parsing(costing, transport_type, 2.f, default_value);
   test_cycling_speed_parsing(costing, transport_type, 70.f, default_value);
 
-  transport_type = "Hybrid";
+  transport_type = "hybrid";
   default_value =
       kDefaultBicycle_CyclingSpeed[static_cast<uint32_t>(valhalla::sif::BicycleType::kHybrid)];
   test_cycling_speed_parsing(costing, transport_type, default_value, default_value);
@@ -2649,7 +2672,7 @@ TEST(ParseRequest, test_cycling_speed) {
   test_cycling_speed_parsing(costing, transport_type, 2.f, default_value);
   test_cycling_speed_parsing(costing, transport_type, 70.f, default_value);
 
-  transport_type = "Mountain";
+  transport_type = "mountain";
   default_value =
       kDefaultBicycle_CyclingSpeed[static_cast<uint32_t>(valhalla::sif::BicycleType::kMountain)];
   test_cycling_speed_parsing(costing, transport_type, default_value, default_value);
@@ -2837,6 +2860,20 @@ TEST(ParseRequest, test_operators_transit_filter) {
   filter_ids = {"operator10", "operator20", "operator30"};
   test_filter_operator_parsing(costing, filter_action, filter_ids);
 }
+
+// test disable_hierarchy_pruning
+TEST_P(HierarchyTest, TestDisableHierarchy) {
+  doTest(GetParam());
+}
+
+INSTANTIATE_TEST_SUITE_P(disable_hierarchy_pruning,
+                         HierarchyTest,
+                         ::testing::Values(Costing::auto_,
+                                           Costing::bus,
+                                           Costing::motor_scooter,
+                                           Costing::truck,
+                                           Costing::motorcycle,
+                                           Costing::taxi));
 
 } // namespace
 

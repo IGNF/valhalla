@@ -1,13 +1,11 @@
 #ifndef VALHALLA_MJOLNIR_OSMNODE_H
 #define VALHALLA_MJOLNIR_OSMNODE_H
 
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <vector>
-
 #include <valhalla/baldr/graphconstants.h>
 #include <valhalla/midgard/pointll.h>
+
+#include <cstdint>
+#include <cstring>
 
 namespace valhalla {
 namespace mjolnir {
@@ -27,20 +25,18 @@ struct OSMNode {
   uint64_t exit_to_index_ : 21;
   uint64_t named_intersection_ : 1;
 
-  uint64_t country_iso_index_ : 21;
-  uint64_t state_iso_index_ : 21;
-  uint64_t traffic_signal_ : 1;
-  uint64_t forward_signal_ : 1;
-  uint64_t backward_signal_ : 1;
-  uint64_t stop_sign_ : 1;
-  uint64_t forward_stop_ : 1;
-  uint64_t backward_stop_ : 1;
-  uint64_t yield_sign_ : 1;
-  uint64_t forward_yield_ : 1;
-  uint64_t backward_yield_ : 1;
-  uint64_t minor_ : 1;
-  uint64_t direction_ : 1;
-  uint64_t spare_ : 11;
+  uint32_t linguistic_info_index_ : 21;
+  uint32_t traffic_signal_ : 1;
+  uint32_t forward_signal_ : 1;
+  uint32_t backward_signal_ : 1;
+  uint32_t stop_sign_ : 1;
+  uint32_t forward_stop_ : 1;
+  uint32_t backward_stop_ : 1;
+  uint32_t yield_sign_ : 1;
+  uint32_t forward_yield_ : 1;
+  uint32_t backward_yield_ : 1;
+  uint32_t minor_ : 1;
+  uint32_t direction_ : 1;
 
   uint32_t access_ : 12;
   uint32_t type_ : 4;
@@ -55,20 +51,8 @@ struct OSMNode {
   uint32_t tagged_access_ : 1; // Was access originally tagged?
   uint32_t private_access_ : 1;
   uint32_t cash_only_toll_ : 1;
-  uint32_t spare1_ : 5;
-
-  // pronunciations
-  uint32_t name_pronunciation_ipa_index_;
-  uint32_t name_pronunciation_nt_sampa_index_;
-  uint32_t name_pronunciation_katakana_index_;
-  uint32_t name_pronunciation_jeita_index_;
-  uint32_t ref_pronunciation_ipa_index_;
-  uint32_t ref_pronunciation_nt_sampa_index_;
-  uint32_t ref_pronunciation_katakana_index_;
-  uint32_t ref_pronunciation_jeita_index_;
-
-  // bss information
-  uint32_t bss_info_;
+  uint32_t synthetic_ : 1;
+  uint32_t spare_ : 4;
 
   // Lat,lng of the node at fixed 7digit precision
   uint32_t lng7_;
@@ -90,8 +74,8 @@ struct OSMNode {
   }
 
   /**
-   * Sets the OSM node Id. Ensures the Id does not exceed the maximum allowed based on
-   * ths OSMNode structure.
+   * Sets the OSM node Id.
+   *
    * @param id Node Id.
    */
   void set_id(const uint64_t id) {
@@ -437,186 +421,6 @@ struct OSMNode {
   }
 
   /**
-   * Sets the index for the ref ipa pronunciation
-   * @param  idx  Index for the reference ipa pronunciation.
-   */
-  void set_ref_pronunciation_ipa_index(const uint32_t idx) {
-    ref_pronunciation_ipa_index_ = idx;
-  }
-
-  /**
-   * Get the ref ipa pronunciation index.
-   * @return  Returns the index for the ref ipa pronunciation.
-   */
-  uint32_t ref_pronunciation_ipa_index() const {
-    return ref_pronunciation_ipa_index_;
-  }
-
-  /**
-   * Sets the index for the ref nt-sampa pronunciation
-   * @param  idx  Index for the reference nt-sampa pronunciation.
-   */
-  void set_ref_pronunciation_nt_sampa_index(const uint32_t idx) {
-    ref_pronunciation_nt_sampa_index_ = idx;
-  }
-
-  /**
-   * Get the ref nt-sampa pronunciation index.
-   * @return  Returns the index for the ref nt-sampa pronunciation.
-   */
-  uint32_t ref_pronunciation_nt_sampa_index() const {
-    return ref_pronunciation_nt_sampa_index_;
-  }
-
-  /**
-   * Sets the index for the ref katakana pronunciation
-   * @param  idx  Index for the reference katakana pronunciation.
-   */
-  void set_ref_pronunciation_katakana_index(const uint32_t idx) {
-    ref_pronunciation_katakana_index_ = idx;
-  }
-
-  /**
-   * Get the ref katakana pronunciation index.
-   * @return  Returns the index for the ref katakana pronunciation.
-   */
-  uint32_t ref_pronunciation_katakana_index() const {
-    return ref_pronunciation_katakana_index_;
-  }
-
-  /**
-   * Sets the index for the ref jeita pronunciation
-   * @param  idx  Index for the reference jeita pronunciation.
-   */
-  void set_ref_pronunciation_jeita_index(const uint32_t idx) {
-    ref_pronunciation_jeita_index_ = idx;
-  }
-
-  /**
-   * Get the ref jeita pronunciation index.
-   * @return  Returns the index for the ref jeita pronunciation.
-   */
-  uint32_t ref_pronunciation_jeita_index() const {
-    return ref_pronunciation_jeita_index_;
-  }
-
-  /**
-   * Sets the index for name ipa pronunciation
-   * @param  idx  Index for the name ipa pronunciation.
-   */
-  void set_name_pronunciation_ipa_index(const uint32_t idx) {
-    name_pronunciation_ipa_index_ = idx;
-  }
-
-  /**
-   * Get the name ipa pronunciation index.
-   * @return  Returns the index for the name ipa pronunciation.
-   */
-  uint32_t name_pronunciation_ipa_index() const {
-    return name_pronunciation_ipa_index_;
-  }
-
-  /**
-   * Sets the index for name nt-sampa pronunciation
-   * @param  idx  Index for the name nt-sampa pronunciation.
-   */
-  void set_name_pronunciation_nt_sampa_index(const uint32_t idx) {
-    name_pronunciation_nt_sampa_index_ = idx;
-  }
-
-  /**
-   * Get the name nt-sampa pronunciation index.
-   * @return  Returns the index for the name nt-sampa pronunciation.
-   */
-  uint32_t name_pronunciation_nt_sampa_index() const {
-    return name_pronunciation_nt_sampa_index_;
-  }
-
-  /**
-   * Sets the index for name katakana pronunciation
-   * @param  idx  Index for the name katakana pronunciation.
-   */
-  void set_name_pronunciation_katakana_index(const uint32_t idx) {
-    name_pronunciation_katakana_index_ = idx;
-  }
-
-  /**
-   * Get the name katakana pronunciation index.
-   * @return  Returns the index for the name katakana pronunciation.
-   */
-  uint32_t name_pronunciation_katakana_index() const {
-    return name_pronunciation_katakana_index_;
-  }
-
-  /**
-   * Sets the index for name jeita pronunciation
-   * @param  idx  Index for the name jeita pronunciation.
-   */
-  void set_name_pronunciation_jeita_index(const uint32_t idx) {
-    name_pronunciation_jeita_index_ = idx;
-  }
-
-  /**
-   * Get the name jeita pronunciation index.
-   * @return  Returns the index for the name jeita pronunciation.
-   */
-  uint32_t name_pronunciation_jeita_index() const {
-    return name_pronunciation_jeita_index_;
-  }
-
-  /**
-   * Set the country iso code index
-   * @param country iso code Index into the 2 char Country ISO Code.
-   */
-  void set_country_iso_index(const uint32_t index) {
-    if (index > kMaxNodeNameIndex) {
-      throw std::runtime_error("OSMNode: exceeded maximum country iso index");
-    }
-    country_iso_index_ = index;
-  }
-
-  /**
-   * Get the country iso code.
-   * @return Returns the index into the 2 char Country ISO Code.
-   */
-  uint32_t country_iso_index() const {
-    return country_iso_index_;
-  }
-
-  /**
-   * Does the node have a 2 char code. Check if country_iso_index is non-zero
-   */
-  bool has_country_iso() const {
-    return country_iso_index_ > 0;
-  }
-
-  /**
-   * Set the country iso code index
-   * @param country iso code Index into the 2 char Country ISO Code.
-   */
-  void set_state_iso_index(const uint32_t index) {
-    if (index > kMaxNodeNameIndex) {
-      throw std::runtime_error("OSMNode: exceeded maximum state iso index");
-    }
-    state_iso_index_ = index;
-  }
-
-  /**
-   * Get the state iso code.
-   * @return Returns the index into the 2 char State ISO Code.
-   */
-  uint32_t state_iso_index() const {
-    return state_iso_index_;
-  }
-
-  /**
-   * Does the node have a 2 char code. Check if state_iso_index is non-zero
-   */
-  bool has_state_iso_index() const {
-    return state_iso_index_ > 0;
-  }
-
-  /**
    * Set the tagged_access flag.
    * @param  tagged_access   Was the access originally tagged? True if
    *         any tags like "access", "auto", "truck", "foot", etc were specified.
@@ -651,6 +455,22 @@ struct OSMNode {
   }
 
   /**
+   * Set the synthetic flag.
+   * @param  synthetic bool.
+   */
+  void set_synthetic(const bool synthetic) {
+    synthetic_ = synthetic;
+  }
+
+  /**
+   * Get the synthetic flag.
+   * @return  Returns synthetic flag.
+   */
+  bool synthetic() const {
+    return synthetic_;
+  }
+
+  /**
    * Set the cash_only_toll flag.
    * @param  cash_only_toll bool.
    */
@@ -667,22 +487,22 @@ struct OSMNode {
   }
 
   /**
-   * Sets the index for bss informations.
-   * @param  idx  Index for the bss informations.
+   * Sets the index for the linguistic info
+   * @param  idx  Index for the linguistic info.
    */
-  void set_bss_info_index(const uint32_t index) {
-    if (index > kMaxNodeNameIndex) {
-      throw std::runtime_error("OSMNode: exceeded maximum bss informations index");
+  void set_linguistic_info_index(const uint32_t idx) {
+    if (idx > kMaxNodeNameIndex) {
+      throw std::runtime_error("OSMNode: exceeded maximum linguistic info index");
     }
-    bss_info_ = index;
+    linguistic_info_index_ = idx;
   }
 
   /**
-   * Get the bss informations index.
-   * @return  Returns the index for the bss informations.
+   * Get the linguistic info index.
+   * @return  Returns the index for the linguistic info.
    */
-  uint32_t bss_info_index() const {
-    return bss_info_;
+  uint32_t linguistic_info_index() const {
+    return linguistic_info_index_;
   }
 };
 

@@ -1,5 +1,6 @@
 #include "gurka.h"
 #include "test.h"
+
 #include <gtest/gtest.h>
 
 #if !defined(VALHALLA_SOURCE_DIR)
@@ -7,6 +8,7 @@
 #endif
 
 using namespace valhalla;
+using namespace valhalla::baldr;
 
 const std::unordered_map<std::string, std::string> build_config{
     {"mjolnir.admin", {VALHALLA_SOURCE_DIR "test/data/netherlands_admin.sqlite"}}};
@@ -100,17 +102,18 @@ TEST(Standalone, NotThruPruning) {
       test::make_clean_graphreader(map.config.get_child("mjolnir"));
 
   // mark these edges with not_thru true...make the test look like real world data
-  std::vector<GraphId> not_thru_edgeids;
+  std::vector<baldr::GraphId> not_thru_edgeids;
   not_thru_edgeids.push_back(std::get<0>(gurka::findEdgeByNodes(*reader, layout, "S", "R")));
   not_thru_edgeids.push_back(std::get<0>(gurka::findEdgeByNodes(*reader, layout, "R", "N")));
   not_thru_edgeids.push_back(std::get<0>(gurka::findEdgeByNodes(*reader, layout, "N", "K")));
 
-  test::customize_edges(map.config, [&not_thru_edgeids](const GraphId& edgeid, DirectedEdge& edge) {
-    if (std::find(not_thru_edgeids.begin(), not_thru_edgeids.end(), edgeid) !=
-        not_thru_edgeids.end()) {
-      edge.set_not_thru(true);
-    }
-  });
+  test::customize_edges(map.config,
+                        [&not_thru_edgeids](const baldr::GraphId& edgeid, baldr::DirectedEdge& edge) {
+                          if (std::find(not_thru_edgeids.begin(), not_thru_edgeids.end(), edgeid) !=
+                              not_thru_edgeids.end()) {
+                            edge.set_not_thru(true);
+                          }
+                        });
 
   not_thru_edgeids.clear();
 
@@ -121,14 +124,15 @@ TEST(Standalone, NotThruPruning) {
   not_thru_edgeids.push_back(std::get<0>(gurka::findEdgeByNodes(*reader, layout, "U", "T")));
   not_thru_edgeids.push_back(std::get<0>(gurka::findEdgeByNodes(*reader, layout, "T", "U")));
 
-  test::customize_edges(map.config, [&not_thru_edgeids](const GraphId& edgeid, DirectedEdge& edge) {
-    if (std::find(not_thru_edgeids.begin(), not_thru_edgeids.end(), edgeid) !=
-        not_thru_edgeids.end()) {
-      edge.set_not_thru(false);
-    }
-  });
+  test::customize_edges(map.config,
+                        [&not_thru_edgeids](const baldr::GraphId& edgeid, baldr::DirectedEdge& edge) {
+                          if (std::find(not_thru_edgeids.begin(), not_thru_edgeids.end(), edgeid) !=
+                              not_thru_edgeids.end()) {
+                            edge.set_not_thru(false);
+                          }
+                        });
 
-  // trival path test.  uses time dep forward A*
+  // trivial path test.  uses time dep forward A*
   auto result = gurka::do_action(valhalla::Options::route, map, {"4", "6"}, "auto");
   gurka::assert::raw::expect_path(result, {"TS", "RS", "HKNR", "HKNR", "HKNR", "FH", "FG", "IG",
                                            "HIJ", "HKNR", "HKNR", "HKNR", "RS", "SYT", "SYT"});

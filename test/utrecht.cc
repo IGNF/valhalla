@@ -1,16 +1,12 @@
-#include "filesystem.h"
 #include "midgard/sequence.h"
-#include "mjolnir/osmnode.h"
+#include "mjolnir/osmway.h"
 #include "mjolnir/pbfgraphparser.h"
-#include <cstdint>
 
 #include <boost/property_tree/ptree.hpp>
-#include <fstream>
+#include <gtest/gtest.h>
 
-#include "baldr/directededge.h"
-#include "baldr/graphconstants.h"
-
-#include "test.h"
+#include <cstdint>
+#include <filesystem>
 
 #if !defined(VALHALLA_SOURCE_DIR)
 #define VALHALLA_SOURCE_DIR
@@ -25,21 +21,10 @@ namespace {
 std::string ways_file = "test_ways_utrecht.bin";
 std::string way_nodes_file = "test_way_nodes_utrecht.bin";
 std::string access_file = "test_access_utrecht.bin";
-std::string pronunciation_file = "test_pronunciation_utrecht.bin";
 std::string from_restriction_file = "test_from_complex_restrictions_utrecht.bin";
 std::string to_restriction_file = "test_to_complex_restrictions_utrecht.bin";
 std::string bss_file = "test_bss_nodes_utrecht.bin";
-
-const auto node_predicate = [](const OSMWayNode& a, const OSMWayNode& b) {
-  return a.node.osmid_ < b.node.osmid_;
-};
-
-OSMNode GetNode(uint64_t node_id, sequence<OSMWayNode>& way_nodes) {
-  auto found = way_nodes.find({node_id}, node_predicate);
-  if (found == way_nodes.end())
-    throw std::runtime_error("Couldn't find node: " + std::to_string(node_id));
-  return (*found).node;
-}
+std::string linguistic_node_file = "test_linguistic_node_utrecht.bin";
 
 auto way_predicate = [](const OSMWay& a, const OSMWay& b) { return a.osmwayid_ < b.osmwayid_; };
 
@@ -56,7 +41,7 @@ TEST(Utrecth, TestBike) {
   conf.put<unsigned long>("mjolnir.id_table_size", 1000);
 
   sequence<OSMWay> ways(ways_file, false);
-  ways.sort(way_predicate);
+  ways.sort(way_predicate, 2);
 
   auto way_127361688 = GetWay(127361688, ways);
   EXPECT_TRUE(way_127361688.auto_forward());
@@ -195,7 +180,7 @@ TEST(Utrecht, TestBus) {
   conf.put<unsigned long>("mjolnir.id_table_size", 1000);
 
   sequence<OSMWay> ways(ways_file, false);
-  ways.sort(way_predicate);
+  ways.sort(way_predicate, 2);
 
   auto way_33648196 = GetWay(33648196, ways);
   EXPECT_TRUE(way_33648196.auto_forward());
@@ -221,7 +206,7 @@ public:
     auto osmdata =
         PBFGraphParser::ParseWays(conf.get_child("mjolnir"),
                                   {VALHALLA_SOURCE_DIR "test/data/utrecht_netherlands.osm.pbf"},
-                                  ways_file, way_nodes_file, access_file, pronunciation_file);
+                                  ways_file, way_nodes_file, access_file);
 
     PBFGraphParser::ParseRelations(conf.get_child("mjolnir"),
                                    {VALHALLA_SOURCE_DIR "test/data/utrecht_netherlands.osm.pbf"},
@@ -229,16 +214,17 @@ public:
 
     PBFGraphParser::ParseNodes(conf.get_child("mjolnir"),
                                {VALHALLA_SOURCE_DIR "test/data/utrecht_netherlands.osm.pbf"},
-                               way_nodes_file, bss_file, osmdata);
+                               way_nodes_file, bss_file, linguistic_node_file, osmdata);
   }
 
   void TearDown() override {
-    filesystem::remove(ways_file);
-    filesystem::remove(way_nodes_file);
-    filesystem::remove(access_file);
-    filesystem::remove(from_restriction_file);
-    filesystem::remove(to_restriction_file);
-    filesystem::remove(bss_file);
+    std::filesystem::remove(ways_file);
+    std::filesystem::remove(way_nodes_file);
+    std::filesystem::remove(access_file);
+    std::filesystem::remove(from_restriction_file);
+    std::filesystem::remove(to_restriction_file);
+    std::filesystem::remove(bss_file);
+    std::filesystem::remove(linguistic_node_file);
   }
 };
 

@@ -1,14 +1,10 @@
-#include <iostream>
-#include <vector>
-
-#include <boost/optional.hpp>
-
-#include "baldr/streetname.h"
 #include "baldr/streetnames.h"
+#include "baldr/streetname.h"
 #include "baldr/verbal_text_formatter.h"
-#include "baldr/verbal_text_formatter_us.h"
-#include "midgard/util.h"
 #include "proto/common.pb.h"
+
+#include <optional>
+#include <vector>
 
 namespace valhalla {
 namespace baldr {
@@ -18,16 +14,17 @@ StreetNames::StreetNames() : std::list<std::unique_ptr<StreetName>>() {
 
 StreetNames::StreetNames(const std::vector<std::pair<std::string, bool>>& names) {
   for (auto& name : names) {
-    this->emplace_back(std::make_unique<StreetName>(name.first, name.second, boost::none));
+    this->emplace_back(std::make_unique<StreetName>(name.first, name.second, std::nullopt));
   }
 }
 
 StreetNames::StreetNames(const google::protobuf::RepeatedPtrField<valhalla::StreetName>& names) {
   for (auto& name : names) {
-    boost::optional<baldr::Pronunciation> pronunciation =
-        boost::make_optional(name.has_pronunciation(),
-                             baldr::Pronunciation{name.pronunciation().alphabet(),
-                                                  name.pronunciation().value()});
+    std::optional<baldr::Pronunciation> pronunciation =
+        name.has_pronunciation()
+            ? std::make_optional(
+                  baldr::Pronunciation{name.pronunciation().alphabet(), name.pronunciation().value()})
+            : std::nullopt;
     this->emplace_back(
         std::make_unique<StreetName>(name.value(), name.is_route_number(), pronunciation));
   }

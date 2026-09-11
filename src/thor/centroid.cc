@@ -1,4 +1,5 @@
 #include "thor/centroid.h"
+#include "midgard/util.h"
 
 using namespace valhalla::baldr;
 using namespace valhalla::sif;
@@ -165,7 +166,7 @@ thor::ExpansionRecommendation Centroid::ShouldExpand(baldr::GraphReader& reader,
 void Centroid::GetExpansionHints(uint32_t& bucket_count, uint32_t& edge_label_reservation) const {
   // TODO: come up with a heuristic based on the expansion we expect to have to do (input locations)
   bucket_count = 20000;
-  edge_label_reservation = 500000;
+  edge_label_reservation = kInitialEdgeLabelCountDijkstras;
 }
 
 // deallocate and prepare for next request
